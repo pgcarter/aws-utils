@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/dynamodb" },
+    { "path": "packages/s3" },
+    { "path": "packages/kinesis" }
+  ]
+}
