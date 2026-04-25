@@ -78,12 +78,15 @@ type PutInput<D> = D extends EntityDefinition<string, infer A, infer I, infer Au
       (Audit extends true ? ForbiddenAuditKeys : object)
   : never;
 
-type UpdatePatch<D> = D extends EntityDefinition<string, infer A, infer I>
-  ? IndexFields<I> & Omit<A, keyof BaseEntity>
+type UpdatePatch<D> = D extends EntityDefinition<string, infer A, infer I, infer Audit>
+  ? IndexFields<I> &
+      Omit<A, keyof BaseEntity | AuditFieldKey> &
+      (Audit extends true ? ForbiddenAuditKeys : object)
   : never;
 
-type UpdateInput<D> = D extends EntityDefinition<string, infer A, infer I>
-  ? Partial<IndexFields<I> & Omit<A, keyof BaseEntity | 'type'>>
+type UpdateInput<D> = D extends EntityDefinition<string, infer A, infer I, infer Audit>
+  ? Partial<IndexFields<I> & Omit<A, keyof BaseEntity | 'type' | AuditFieldKey>> &
+      (Audit extends true ? ForbiddenAuditKeys : object)
   : never;
 
 type OptionalKeys<T> = {
@@ -91,7 +94,7 @@ type OptionalKeys<T> = {
 }[keyof T];
 
 type RemovableKeys<D> = D extends EntityDefinition<string, infer A, infer I>
-  ? OptionalKeys<IndexFields<I> & Omit<A, keyof BaseEntity | 'type'>> & string
+  ? OptionalKeys<IndexFields<I> & Omit<A, keyof BaseEntity | 'type' | AuditFieldKey>> & string
   : never;
 
 export type SkCondition =
@@ -152,9 +155,15 @@ export interface UpdateExpressionResult {
   ExpressionAttributeValues?: Record<string, unknown>;
 }
 
+export interface AuditPayload {
+  actor: object;
+  now: string;
+}
+
 export const buildUpdateExpression = (
   patch: Record<string, unknown>,
   remove?: readonly string[],
+  audit?: AuditPayload,
 ): UpdateExpressionResult => {
   const names: Record<string, string> = {};
   const values: Record<string, unknown> = {};
@@ -175,6 +184,26 @@ export const buildUpdateExpression = (
     names[nameKey] = attr;
     removes.push(nameKey);
     i += 1;
+  }
+  if (audit) {
+    const auditFields: Array<readonly [string, unknown, boolean]> = [
+      ['createdAt', audit.now, true],
+      ['createdBy', audit.actor, true],
+      ['modifiedAt', audit.now, false],
+      ['modifiedBy', audit.actor, false],
+    ];
+    for (const [attr, value, ifNotExists] of auditFields) {
+      const nameKey = `#a${i}`;
+      const valueKey = `:a${i}`;
+      names[nameKey] = attr;
+      values[valueKey] = value;
+      sets.push(
+        ifNotExists
+          ? `${nameKey} = if_not_exists(${nameKey}, ${valueKey})`
+          : `${nameKey} = ${valueKey}`,
+      );
+      i += 1;
+    }
   }
   const clauses: string[] = [];
   if (sets.length) clauses.push(`SET ${sets.join(', ')}`);
@@ -268,7 +297,10 @@ export const createDynamoClient = <
       },
       update: async ({ PK, SK }, patch, remove) => {
         const { type: _type, ...userPatch } = patch as Record<string, unknown>;
-        const expr = buildUpdateExpression(userPatch, remove);
+        const audit = def.audit
+          ? { actor: await getActor(), now: new Date().toISOString() }
+          : undefined;
+        const expr = buildUpdateExpression(userPatch, remove, audit);
         const { Attributes } = await doc.send(
           new UpdateCommand({
             TableName: tableName,

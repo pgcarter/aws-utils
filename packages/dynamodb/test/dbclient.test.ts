@@ -1,4 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDynamoClient, type DynamoClient } from '../src';
 import { type Actor, entities, getActor, makeUser, TEST_ACTOR } from './fixtures';
@@ -130,6 +131,64 @@ describe('update', () => {
     expect(fetched?.GSI1PK).toBeUndefined();
     expect(fetched?.GSI1SK).toBeUndefined();
   });
+
+  it('updates only modifiedAt/modifiedBy and preserves createdAt/createdBy on an audited row', async () => {
+    const user = makeUser({ PK: 'USER#mod-only' });
+    await db.user.put(user);
+
+    const LATER = '2026-05-01T08:30:00.000Z';
+    vi.setSystemTime(new Date(LATER));
+
+    const updated = await db.user.update(
+      { PK: user.PK, SK: user.SK },
+      { name: 'Updated' },
+    );
+
+    expect(updated.createdAt).toBe(NOW);
+    expect(updated.createdBy).toEqual(TEST_ACTOR);
+    expect(updated.modifiedAt).toBe(LATER);
+    expect(updated.modifiedBy).toEqual(TEST_ACTOR);
+    expect(updated.name).toBe('Updated');
+  });
+
+  it('self-heals all four audit fields on a legacy row that predates audit', async () => {
+    const PK = 'USER#legacy';
+    const doc = DynamoDBDocumentClient.from(rawClient);
+    await doc.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: {
+          PK,
+          SK: PK,
+          type: 'USER',
+          name: 'Legacy',
+          email: 'legacy@example.com',
+        },
+      }),
+    );
+
+    const updated = await db.user.update({ PK, SK: PK }, { name: 'Healed' });
+
+    expect(updated.createdAt).toBe(NOW);
+    expect(updated.createdBy).toEqual(TEST_ACTOR);
+    expect(updated.modifiedAt).toBe(NOW);
+    expect(updated.modifiedBy).toEqual(TEST_ACTOR);
+    expect(updated.name).toBe('Healed');
+  });
+
+  it('writes no audit fields when updating an entity defined with audit: false', async () => {
+    await db.cache.put({ PK: 'CACHE#u', SK: 'CACHE#u', value: 'v1' });
+    const updated = await db.cache.update(
+      { PK: 'CACHE#u', SK: 'CACHE#u' },
+      { value: 'v2' },
+    );
+
+    expect(updated.value).toBe('v2');
+    expect(updated).not.toHaveProperty('createdAt');
+    expect(updated).not.toHaveProperty('createdBy');
+    expect(updated).not.toHaveProperty('modifiedAt');
+    expect(updated).not.toHaveProperty('modifiedBy');
+  });
 });
 
 // Type-only spoof guard: callers cannot pass audit fields to put().
@@ -146,3 +205,17 @@ function _putRejectsAuditFieldsAtCompileTime(client: typeof db) {
   client.user.put({ ...makeUser(), modifiedBy: { id: 'spoofed' } });
 }
 void _putRejectsAuditFieldsAtCompileTime;
+
+// Type-only spoof guard: callers cannot pass audit fields to update().
+function _updateRejectsAuditFieldsAtCompileTime(client: typeof db) {
+  const key = { PK: 'USER#x', SK: 'USER#x' };
+  // @ts-expect-error - createdAt is reserved by audit
+  client.user.update(key, { createdAt: '2020-01-01T00:00:00.000Z' });
+  // @ts-expect-error - createdBy is reserved by audit
+  client.user.update(key, { createdBy: { id: 'spoofed' } });
+  // @ts-expect-error - modifiedAt is reserved by audit
+  client.user.update(key, { modifiedAt: '2020-01-01T00:00:00.000Z' });
+  // @ts-expect-error - modifiedBy is reserved by audit
+  client.user.update(key, { modifiedBy: { id: 'spoofed' } });
+}
+void _updateRejectsAuditFieldsAtCompileTime;
