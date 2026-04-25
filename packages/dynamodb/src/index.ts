@@ -315,7 +315,10 @@ export const createDynamoClient = <
         return Attributes as ResolvedEntity<E[typeof key], Actor>;
       },
       upsert: async ({ PK, SK }, patch) => {
-        const expr = buildUpdateExpression({ ...patch, type: def.type });
+        const audit = def.audit
+          ? { actor: await getActor(), now: new Date().toISOString() }
+          : undefined;
+        const expr = buildUpdateExpression({ ...patch, type: def.type }, undefined, audit);
         const { Attributes } = await doc.send(
           new UpdateCommand({
             TableName: tableName,

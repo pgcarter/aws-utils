@@ -191,6 +191,90 @@ describe('update', () => {
   });
 });
 
+describe('upsert', () => {
+  it('updates only modifiedAt/modifiedBy and preserves createdAt/createdBy on an existing audited row', async () => {
+    const user = makeUser({ PK: 'USER#upsert-mod-only' });
+    await db.user.put(user);
+
+    const LATER = '2026-05-01T08:30:00.000Z';
+    vi.setSystemTime(new Date(LATER));
+
+    const updated = await db.user.upsert(
+      { PK: user.PK, SK: user.SK },
+      { name: 'Updated', email: user.email },
+    );
+
+    expect(updated.createdAt).toBe(NOW);
+    expect(updated.createdBy).toEqual(TEST_ACTOR);
+    expect(updated.modifiedAt).toBe(LATER);
+    expect(updated.modifiedBy).toEqual(TEST_ACTOR);
+    expect(updated.name).toBe('Updated');
+  });
+
+  it('creates a missing row with all four audit fields populated', async () => {
+    const PK = 'USER#upsert-create';
+    const created = await db.user.upsert(
+      { PK, SK: PK },
+      {
+        GSI1PK: 'USERS',
+        GSI1SK: 'newbie',
+        name: 'Newbie',
+        email: 'newbie@example.com',
+      },
+    );
+
+    expect(created.createdAt).toBe(NOW);
+    expect(created.createdBy).toEqual(TEST_ACTOR);
+    expect(created.modifiedAt).toBe(NOW);
+    expect(created.modifiedBy).toEqual(TEST_ACTOR);
+    expect(created.name).toBe('Newbie');
+
+    const fetched = await db.user.get({ PK, SK: PK });
+    expect(fetched).toEqual(created);
+  });
+
+  it('self-heals all four audit fields on a legacy row that predates audit', async () => {
+    const PK = 'USER#upsert-legacy';
+    const doc = DynamoDBDocumentClient.from(rawClient);
+    await doc.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: {
+          PK,
+          SK: PK,
+          type: 'USER',
+          name: 'Legacy',
+          email: 'legacy@example.com',
+        },
+      }),
+    );
+
+    const updated = await db.user.upsert(
+      { PK, SK: PK },
+      { name: 'Healed', email: 'legacy@example.com' },
+    );
+
+    expect(updated.createdAt).toBe(NOW);
+    expect(updated.createdBy).toEqual(TEST_ACTOR);
+    expect(updated.modifiedAt).toBe(NOW);
+    expect(updated.modifiedBy).toEqual(TEST_ACTOR);
+    expect(updated.name).toBe('Healed');
+  });
+
+  it('writes no audit fields when upserting an entity defined with audit: false', async () => {
+    const created = await db.cache.upsert(
+      { PK: 'CACHE#upsert', SK: 'CACHE#upsert' },
+      { value: 'fresh' },
+    );
+
+    expect(created.value).toBe('fresh');
+    expect(created).not.toHaveProperty('createdAt');
+    expect(created).not.toHaveProperty('createdBy');
+    expect(created).not.toHaveProperty('modifiedAt');
+    expect(created).not.toHaveProperty('modifiedBy');
+  });
+});
+
 // Type-only spoof guard: callers cannot pass audit fields to put().
 // This function is never invoked; the // @ts-expect-error directives are
 // validated at typecheck time.
