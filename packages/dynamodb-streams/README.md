@@ -21,6 +21,15 @@ const processor = createStreamProcessor({ entities })
   .on('MODIFY', 'user', async ({ oldEntity, newEntity }) => {})
   .on('REMOVE', 'user', async ({ entity }) => {});
 
+// Share one handler across events — arg is typed as the union of per-event args.
+createStreamProcessor({ entities }).on(['INSERT', 'MODIFY'], 'user', async (arg) => {
+  if ('oldEntity' in arg) {
+    /* MODIFY */
+  } else {
+    /* INSERT */
+  }
+});
+
 // Pass the records straight off your stream batch.
 const { batchItemFailures } = await processor.process(records);
 ```

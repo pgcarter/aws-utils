@@ -14,6 +14,14 @@ export interface StreamProcessor<Entities extends EntityMap, Actor extends objec
     entityName: N,
     handler: Handler<E, Entities, N, Actor>,
   ): StreamProcessor<Entities, Actor>;
+  on<
+    const Events extends readonly [StreamEvent, ...StreamEvent[]],
+    N extends keyof Entities,
+  >(
+    events: Events,
+    entityName: N,
+    handler: Handler<Events[number], Entities, N, Actor>,
+  ): StreamProcessor<Entities, Actor>;
   process(records: readonly DynamoDBRecord[]): Promise<ProcessResult>;
 }
 
@@ -30,11 +38,20 @@ export const createStreamProcessor = <
   const { entities } = options;
   const registry = new HandlerRegistry();
 
+  const onImpl = (
+    eventOrEvents: StreamEvent | readonly StreamEvent[],
+    entityName: string,
+    handler: RegistryHandler,
+  ): StreamProcessor<Entities, Actor> => {
+    const events = Array.isArray(eventOrEvents) ? eventOrEvents : [eventOrEvents];
+    for (const event of events) {
+      registry.register(event, entityName, handler);
+    }
+    return processor;
+  };
+
   const processor: StreamProcessor<Entities, Actor> = {
-    on(event, entityName, handler) {
-      registry.register(event, entityName as string, handler as RegistryHandler);
-      return processor;
-    },
+    on: onImpl as StreamProcessor<Entities, Actor>['on'],
     async process(records) {
       const failures: ProcessResult['batchItemFailures'] = [];
       for (const record of records) {

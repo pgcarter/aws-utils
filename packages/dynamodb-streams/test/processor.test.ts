@@ -362,4 +362,99 @@ describe('createStreamProcessor', () => {
       expect(result).toEqual({ batchItemFailures: [] });
     });
   });
+
+  describe('multi-event registration', () => {
+    it('registers a single handler against every event in the array', async () => {
+      const calls: Array<{ event: string; sequenceNumber: string }> = [];
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        ['INSERT', 'MODIFY'],
+        'user',
+        async (arg) => {
+          const event = 'oldEntity' in arg ? 'MODIFY' : 'INSERT';
+          calls.push({ event, sequenceNumber: arg.sequenceNumber });
+        },
+      );
+
+      await processor.process([
+        insertRecord({ sequenceNumber: 'seq-ins' }),
+        modifyRecord({ sequenceNumber: 'seq-mod' }),
+        removeRecord({ sequenceNumber: 'seq-rem' }),
+      ]);
+
+      expect(calls).toEqual([
+        { event: 'INSERT', sequenceNumber: 'seq-ins' },
+        { event: 'MODIFY', sequenceNumber: 'seq-mod' },
+      ]);
+    });
+
+    it('degenerates to a singleton registration when the array has one event', async () => {
+      const handler = vi.fn(async () => {});
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        ['INSERT'],
+        'user',
+        handler,
+      );
+
+      await processor.process([insertRecord(), modifyRecord()]);
+
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('mixes array-form and single-form .on() calls on the same builder', async () => {
+      const userInsertOrModify = vi.fn(async () => {});
+      const userRemove = vi.fn(async () => {});
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities })
+        .on(['INSERT', 'MODIFY'], 'user', userInsertOrModify)
+        .on('REMOVE', 'user', userRemove);
+
+      await processor.process([insertRecord(), modifyRecord(), removeRecord()]);
+
+      expect(userInsertOrModify).toHaveBeenCalledTimes(2);
+      expect(userRemove).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws when an array-form registration overlaps an earlier singleton on the same cell', () => {
+      const builder = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        'INSERT',
+        'user',
+        async () => {},
+      );
+
+      expect(() =>
+        builder.on(['INSERT', 'MODIFY'], 'user', async () => {}),
+      ).toThrowError(/INSERT:user/);
+    });
+
+    it('throws when two array-form registrations overlap on the same cell', () => {
+      const builder = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        ['INSERT', 'MODIFY'],
+        'user',
+        async () => {},
+      );
+
+      expect(() =>
+        builder.on(['MODIFY', 'REMOVE'], 'user', async () => {}),
+      ).toThrowError(/MODIFY:user/);
+    });
+
+    it('passes a typed union arg to the multi-event handler at compile time (sanity)', async () => {
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        ['INSERT', 'MODIFY'],
+        'user',
+        async (arg) => {
+          const _key: { PK: string; SK: string } = arg.key;
+          if ('oldEntity' in arg) {
+            const _old: string = arg.oldEntity.name;
+            void _old;
+          } else {
+            const _name: string = arg.entity.name;
+            void _name;
+          }
+          void _key;
+        },
+      );
+
+      await processor.process([insertRecord(), modifyRecord()]);
+    });
+  });
 });
