@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
+  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
@@ -130,6 +131,13 @@ export type EntityOperations<D extends AnyEntityDefinition, Actor extends object
     patch: UpdateInput<D>,
     remove?: readonly RemovableKeys<D>[],
   ) => Promise<ResolvedEntity<D, Actor>>;
+  delete: {
+    (key: EntityKey, options: { strict: true }): Promise<ResolvedEntity<D, Actor>>;
+    (
+      key: EntityKey,
+      options?: { strict?: boolean },
+    ): Promise<ResolvedEntity<D, Actor> | undefined>;
+  };
 };
 
 export type DynamoClient<
@@ -331,6 +339,38 @@ export const createDynamoClient = <
         );
         return Attributes as ResolvedEntity<E[typeof key], Actor>;
       },
+      delete: (async (
+        { PK, SK }: EntityKey,
+        options?: { strict?: boolean },
+      ) => {
+        const strict = options?.strict === true;
+        try {
+          const { Attributes } = await doc.send(
+            new DeleteCommand({
+              TableName: tableName,
+              Key: { PK, SK },
+              ConditionExpression: strict
+                ? 'attribute_exists(PK) AND #type = :type'
+                : '#type = :type',
+              ExpressionAttributeNames: { '#type': 'type' },
+              ExpressionAttributeValues: { ':type': def.type },
+              ReturnValues: 'ALL_OLD',
+              ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
+            }),
+          );
+          return Attributes as ResolvedEntity<E[typeof key], Actor>;
+        } catch (error) {
+          if (
+            !strict &&
+            error instanceof Error &&
+            error.name === 'ConditionalCheckFailedException' &&
+            !(error as { Item?: unknown }).Item
+          ) {
+            return undefined;
+          }
+          throw error;
+        }
+      }) as EntityOperations<E[typeof key], Actor>['delete'],
       pagedQuery: async ({ pk, sk, index, limit }) => {
         const pkAttr = index ? `${index}PK` : 'PK';
         const skAttr = index ? `${index}SK` : 'SK';

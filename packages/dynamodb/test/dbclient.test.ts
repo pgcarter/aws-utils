@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDynamoClient, type DynamoClient } from '../src';
 import { type Actor, entities, getActor, makeUser, TEST_ACTOR } from './fixtures';
@@ -274,6 +274,114 @@ describe('upsert', () => {
     expect(created).not.toHaveProperty('modifiedBy');
   });
 });
+
+describe('delete', () => {
+  it('removes an existing row and returns the deleted entity (idempotent default)', async () => {
+    const user = makeUser({ PK: 'USER#del-existing' });
+    const created = await db.user.put(user);
+
+    const removed = await db.user.delete({ PK: user.PK, SK: user.SK });
+
+    expect(removed).toEqual(created);
+    const fetched = await db.user.get({ PK: user.PK, SK: user.SK });
+    expect(fetched).toBeUndefined();
+  });
+
+  it('resolves to undefined when the row is missing (idempotent default)', async () => {
+    const removed = await db.user.delete({
+      PK: 'USER#del-missing',
+      SK: 'USER#del-missing',
+    });
+
+    expect(removed).toBeUndefined();
+  });
+
+  it('throws when the row exists but its type does not match (idempotent default)', async () => {
+    const PK = 'USER#del-wrong-type';
+    const doc = DynamoDBDocumentClient.from(rawClient);
+    await doc.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: { PK, SK: PK, type: 'CACHE', value: 'wrong' },
+      }),
+    );
+
+    await expect(db.user.delete({ PK, SK: PK })).rejects.toThrow(/conditional/i);
+
+    const { Item } = await doc.send(
+      new GetCommand({ TableName: tableName, Key: { PK, SK: PK } }),
+    );
+    expect(Item).toBeDefined();
+    expect(Item?.type).toBe('CACHE');
+  });
+
+  it('removes an existing right-type row in strict mode', async () => {
+    const user = makeUser({ PK: 'USER#del-strict-existing' });
+    const created = await db.user.put(user);
+
+    const removed = await db.user.delete({ PK: user.PK, SK: user.SK }, { strict: true });
+
+    expect(removed).toEqual(created);
+    const fetched = await db.user.get({ PK: user.PK, SK: user.SK });
+    expect(fetched).toBeUndefined();
+  });
+
+  it('throws when the row is missing in strict mode', async () => {
+    await expect(
+      db.user.delete(
+        { PK: 'USER#del-strict-missing', SK: 'USER#del-strict-missing' },
+        { strict: true },
+      ),
+    ).rejects.toThrow(/conditional/i);
+  });
+
+  it('throws when the row exists but is the wrong type in strict mode', async () => {
+    const PK = 'USER#del-strict-wrong-type';
+    const doc = DynamoDBDocumentClient.from(rawClient);
+    await doc.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: { PK, SK: PK, type: 'CACHE', value: 'wrong' },
+      }),
+    );
+
+    await expect(
+      db.user.delete({ PK, SK: PK }, { strict: true }),
+    ).rejects.toThrow(/conditional/i);
+  });
+
+  it('behaves identically for an audit:false entity', async () => {
+    await db.cache.put({ PK: 'CACHE#del', SK: 'CACHE#del', value: 'v' });
+
+    const removed = await db.cache.delete({ PK: 'CACHE#del', SK: 'CACHE#del' });
+    expect(removed).toEqual({
+      PK: 'CACHE#del',
+      SK: 'CACHE#del',
+      value: 'v',
+      type: 'CACHE',
+    });
+
+    const missing = await db.cache.delete({ PK: 'CACHE#del', SK: 'CACHE#del' });
+    expect(missing).toBeUndefined();
+
+    await expect(
+      db.cache.delete({ PK: 'CACHE#del', SK: 'CACHE#del' }, { strict: true }),
+    ).rejects.toThrow(/conditional/i);
+  });
+});
+
+// Type-only narrowing guard: strict:true narrows the return to non-undefined.
+async function _deleteStrictReturnIsNonNullable(client: typeof db) {
+  const key = { PK: 'USER#x', SK: 'USER#x' };
+  const removed = await client.user.delete(key, { strict: true });
+  // Should not require a null check — non-nullable in strict mode.
+  removed.PK;
+
+  const maybeRemoved = await client.user.delete(key);
+  // @ts-expect-error - default mode returns Entity | undefined, not narrowed
+  maybeRemoved.PK;
+}
+void _deleteStrictReturnIsNonNullable;
 
 // Type-only spoof guard: callers cannot pass audit fields to put().
 // This function is never invoked; the // @ts-expect-error directives are
