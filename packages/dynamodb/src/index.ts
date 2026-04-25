@@ -58,7 +58,7 @@ export const defineEntity = <
   indexes: (options?.indexes ?? []) as readonly TIndexes[number][],
 });
 
-type ResolvedEntity<D, Actor extends object> = D extends EntityDefinition<
+export type ResolvedEntity<D, Actor extends object> = D extends EntityDefinition<
   infer T,
   infer A,
   infer I,
