@@ -113,6 +113,46 @@ export interface CreateDynamoClientOptions<E extends Record<string, AnyEntityDef
   client?: DynamoDBClient;
 }
 
+export interface UpdateExpressionResult {
+  UpdateExpression: string;
+  ExpressionAttributeNames: Record<string, string>;
+  ExpressionAttributeValues?: Record<string, unknown>;
+}
+
+export const buildUpdateExpression = (
+  patch: Record<string, unknown>,
+  remove?: readonly string[],
+): UpdateExpressionResult => {
+  const names: Record<string, string> = {};
+  const values: Record<string, unknown> = {};
+  const sets: string[] = [];
+  const removes: string[] = [];
+  let i = 0;
+  for (const [attr, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    const nameKey = `#a${i}`;
+    const valueKey = `:a${i}`;
+    names[nameKey] = attr;
+    values[valueKey] = value;
+    sets.push(`${nameKey} = ${valueKey}`);
+    i += 1;
+  }
+  for (const attr of remove ?? []) {
+    const nameKey = `#a${i}`;
+    names[nameKey] = attr;
+    removes.push(nameKey);
+    i += 1;
+  }
+  const clauses: string[] = [];
+  if (sets.length) clauses.push(`SET ${sets.join(', ')}`);
+  if (removes.length) clauses.push(`REMOVE ${removes.join(', ')}`);
+  return {
+    UpdateExpression: clauses.join(' '),
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: sets.length ? values : undefined,
+  };
+};
+
 const buildKeyCondition = (
   pkAttr: string,
   skAttr: string,
@@ -176,63 +216,30 @@ export const createDynamoClient = <E extends Record<string, AnyEntityDefinition>
         return Item as ResolvedEntity<E[typeof key]> | undefined;
       },
       update: async ({ PK, SK }, patch, remove) => {
-        const names: Record<string, string> = {};
-        const values: Record<string, unknown> = {};
-        const sets: string[] = [];
-        const removes: string[] = [];
-        let i = 0;
-        for (const [attr, value] of Object.entries(patch)) {
-          if (value === undefined || attr === 'type') continue;
-          const nameKey = `#a${i}`;
-          const valueKey = `:a${i}`;
-          names[nameKey] = attr;
-          values[valueKey] = value;
-          sets.push(`${nameKey} = ${valueKey}`);
-          i += 1;
-        }
-        for (const attr of remove ?? []) {
-          const nameKey = `#a${i}`;
-          names[nameKey] = attr;
-          removes.push(nameKey);
-          i += 1;
-        }
-        const clauses: string[] = [];
-        if (sets.length) clauses.push(`SET ${sets.join(', ')}`);
-        if (removes.length) clauses.push(`REMOVE ${removes.join(', ')}`);
+        const { type: _type, ...userPatch } = patch as Record<string, unknown>;
+        const expr = buildUpdateExpression(userPatch, remove);
         const { Attributes } = await doc.send(
           new UpdateCommand({
             TableName: tableName,
             Key: { PK, SK },
-            UpdateExpression: clauses.join(' '),
+            UpdateExpression: expr.UpdateExpression,
             ConditionExpression: 'attribute_exists(PK)',
-            ExpressionAttributeNames: names,
-            ExpressionAttributeValues: sets.length ? values : undefined,
+            ExpressionAttributeNames: expr.ExpressionAttributeNames,
+            ExpressionAttributeValues: expr.ExpressionAttributeValues,
             ReturnValues: 'ALL_NEW',
           }),
         );
         return Attributes as ResolvedEntity<E[typeof key]>;
       },
       upsert: async ({ PK, SK }, patch) => {
-        const names: Record<string, string> = { '#type': 'type' };
-        const values: Record<string, unknown> = { ':type': def.type };
-        const sets: string[] = ['#type = :type'];
-        let i = 0;
-        for (const [attr, value] of Object.entries(patch)) {
-          if (value === undefined) continue;
-          const nameKey = `#a${i}`;
-          const valueKey = `:a${i}`;
-          names[nameKey] = attr;
-          values[valueKey] = value;
-          sets.push(`${nameKey} = ${valueKey}`);
-          i += 1;
-        }
+        const expr = buildUpdateExpression({ ...patch, type: def.type });
         const { Attributes } = await doc.send(
           new UpdateCommand({
             TableName: tableName,
             Key: { PK, SK },
-            UpdateExpression: `SET ${sets.join(', ')}`,
-            ExpressionAttributeNames: names,
-            ExpressionAttributeValues: values,
+            UpdateExpression: expr.UpdateExpression,
+            ExpressionAttributeNames: expr.ExpressionAttributeNames,
+            ExpressionAttributeValues: expr.ExpressionAttributeValues,
             ReturnValues: 'ALL_NEW',
           }),
         );
