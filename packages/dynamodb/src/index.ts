@@ -22,12 +22,23 @@ type IndexFields<TIndexes extends IndexName> = {
   [K in `${TIndexes}PK` | `${TIndexes}SK`]?: string;
 };
 
+export type AuditFieldKey = 'createdAt' | 'createdBy' | 'modifiedAt' | 'modifiedBy';
+
+export type AuditFields<Actor extends object> = {
+  createdAt: string;
+  createdBy: Actor;
+  modifiedAt: string;
+  modifiedBy: Actor;
+};
+
 export interface EntityDefinition<
   TType extends string = string,
   TAttrs extends object = object,
   TIndexes extends IndexName = never,
+  TAudit extends boolean = true,
 > {
   type: TType;
+  audit: TAudit;
   indexes: readonly TIndexes[];
   readonly __attrs?: TAttrs;
 }
@@ -36,28 +47,43 @@ export const defineEntity = <
   TType extends string,
   TAttrs extends object = object,
   const TIndexes extends readonly IndexName[] = readonly [],
+  const TAudit extends boolean = true,
 >(
   type: TType extends Uppercase<TType> ? TType : never,
-  options?: { indexes?: TIndexes },
-): EntityDefinition<TType, TAttrs, TIndexes[number]> => ({
+  options?: { indexes?: TIndexes; audit?: TAudit },
+): EntityDefinition<TType, TAttrs, TIndexes[number], TAudit> => ({
   type,
+  audit: (options?.audit ?? true) as TAudit,
   indexes: (options?.indexes ?? []) as readonly TIndexes[number][],
 });
 
-type ResolvedEntity<D> = D extends EntityDefinition<infer T, infer A, infer I>
-  ? BaseEntity & IndexFields<I> & A & { type: T }
+type ResolvedEntity<D, Actor extends object> = D extends EntityDefinition<
+  infer T,
+  infer A,
+  infer I,
+  infer Audit
+>
+  ? BaseEntity &
+      IndexFields<I> &
+      A & { type: T } &
+      (Audit extends true ? AuditFields<Actor> : object)
   : never;
 
-type PutInput<D> = D extends EntityDefinition<string, infer A, infer I>
-  ? BaseEntity & IndexFields<I> & A
+type ForbiddenAuditKeys = { [K in AuditFieldKey]?: never };
+
+type PutInput<D> = D extends EntityDefinition<string, infer A, infer I, infer Audit>
+  ? BaseEntity &
+      IndexFields<I> &
+      Omit<A, AuditFieldKey> &
+      (Audit extends true ? ForbiddenAuditKeys : object)
   : never;
 
 type UpdatePatch<D> = D extends EntityDefinition<string, infer A, infer I>
-  ? IndexFields<I> & A
+  ? IndexFields<I> & Omit<A, keyof BaseEntity>
   : never;
 
 type UpdateInput<D> = D extends EntityDefinition<string, infer A, infer I>
-  ? Partial<IndexFields<I> & Omit<A, 'type'>>
+  ? Partial<IndexFields<I> & Omit<A, keyof BaseEntity | 'type'>>
   : never;
 
 type OptionalKeys<T> = {
@@ -65,7 +91,7 @@ type OptionalKeys<T> = {
 }[keyof T];
 
 type RemovableKeys<D> = D extends EntityDefinition<string, infer A, infer I>
-  ? OptionalKeys<IndexFields<I> & Omit<A, 'type'>> & string
+  ? OptionalKeys<IndexFields<I> & Omit<A, keyof BaseEntity | 'type'>> & string
   : never;
 
 export type SkCondition =
@@ -89,27 +115,34 @@ export type QueryParams<D> = {
   limit?: number;
 } & IndexOption<D>;
 
-export type AnyEntityDefinition = EntityDefinition<string, object, IndexName>;
+export type AnyEntityDefinition = EntityDefinition<string, object, IndexName, boolean>;
 
-export type EntityOperations<D extends AnyEntityDefinition> = {
-  put: (entity: PutInput<D>) => Promise<ResolvedEntity<D>>;
-  get: (key: EntityKey) => Promise<ResolvedEntity<D> | undefined>;
-  pagedQuery: (params: QueryParams<D>) => Promise<ResolvedEntity<D>[]>;
-  upsert: (key: EntityKey, patch: UpdatePatch<D>) => Promise<ResolvedEntity<D>>;
+export type EntityOperations<D extends AnyEntityDefinition, Actor extends object> = {
+  put: (entity: PutInput<D>) => Promise<ResolvedEntity<D, Actor>>;
+  get: (key: EntityKey) => Promise<ResolvedEntity<D, Actor> | undefined>;
+  pagedQuery: (params: QueryParams<D>) => Promise<ResolvedEntity<D, Actor>[]>;
+  upsert: (key: EntityKey, patch: UpdatePatch<D>) => Promise<ResolvedEntity<D, Actor>>;
   update: (
     key: EntityKey,
     patch: UpdateInput<D>,
     remove?: readonly RemovableKeys<D>[],
-  ) => Promise<ResolvedEntity<D>>;
+  ) => Promise<ResolvedEntity<D, Actor>>;
 };
 
-export type DynamoClient<E extends Record<string, AnyEntityDefinition>> = {
-  [K in keyof E]: EntityOperations<E[K]>;
+export type DynamoClient<
+  E extends Record<string, AnyEntityDefinition>,
+  Actor extends object,
+> = {
+  [K in keyof E]: EntityOperations<E[K], Actor>;
 };
 
-export interface CreateDynamoClientOptions<E extends Record<string, AnyEntityDefinition>> {
+export interface CreateDynamoClientOptions<
+  E extends Record<string, AnyEntityDefinition>,
+  Actor extends object,
+> {
   tableName: string;
   entities: E;
+  getActor: () => Actor | Promise<Actor>;
   client?: DynamoDBClient;
 }
 
@@ -193,27 +226,45 @@ const buildKeyCondition = (
   return { expression: expr, names, values };
 };
 
-export const createDynamoClient = <E extends Record<string, AnyEntityDefinition>>({
+export const createDynamoClient = <
+  E extends Record<string, AnyEntityDefinition>,
+  Actor extends object,
+>({
   tableName,
   entities,
   client,
-}: CreateDynamoClientOptions<E>): DynamoClient<E> => {
+  getActor,
+}: CreateDynamoClientOptions<E, Actor>): DynamoClient<E, Actor> => {
   const doc = DynamoDBDocumentClient.from(client ?? new DynamoDBClient({}));
 
-  const result = {} as DynamoClient<E>;
+  const result = {} as DynamoClient<E, Actor>;
   for (const key of Object.keys(entities) as Array<keyof E>) {
     const def = entities[key]!;
     result[key] = {
       put: async (entity) => {
-        const item = { ...entity, type: def.type };
-        await doc.send(new PutCommand({ TableName: tableName, Item: item }));
-        return item as ResolvedEntity<E[typeof key]>;
+        const item: Record<string, unknown> = { ...entity, type: def.type };
+        if (def.audit) {
+          const actor = await getActor();
+          const now = new Date().toISOString();
+          item.createdAt = now;
+          item.createdBy = actor;
+          item.modifiedAt = now;
+          item.modifiedBy = actor;
+        }
+        await doc.send(
+          new PutCommand({
+            TableName: tableName,
+            Item: item,
+            ConditionExpression: 'attribute_not_exists(PK)',
+          }),
+        );
+        return item as ResolvedEntity<E[typeof key], Actor>;
       },
       get: async ({ PK, SK }) => {
         const { Item } = await doc.send(
           new GetCommand({ TableName: tableName, Key: { PK, SK } }),
         );
-        return Item as ResolvedEntity<E[typeof key]> | undefined;
+        return Item as ResolvedEntity<E[typeof key], Actor> | undefined;
       },
       update: async ({ PK, SK }, patch, remove) => {
         const { type: _type, ...userPatch } = patch as Record<string, unknown>;
@@ -229,7 +280,7 @@ export const createDynamoClient = <E extends Record<string, AnyEntityDefinition>
             ReturnValues: 'ALL_NEW',
           }),
         );
-        return Attributes as ResolvedEntity<E[typeof key]>;
+        return Attributes as ResolvedEntity<E[typeof key], Actor>;
       },
       upsert: async ({ PK, SK }, patch) => {
         const expr = buildUpdateExpression({ ...patch, type: def.type });
@@ -243,7 +294,7 @@ export const createDynamoClient = <E extends Record<string, AnyEntityDefinition>
             ReturnValues: 'ALL_NEW',
           }),
         );
-        return Attributes as ResolvedEntity<E[typeof key]>;
+        return Attributes as ResolvedEntity<E[typeof key], Actor>;
       },
       pagedQuery: async ({ pk, sk, index, limit }) => {
         const pkAttr = index ? `${index}PK` : 'PK';
@@ -253,7 +304,7 @@ export const createDynamoClient = <E extends Record<string, AnyEntityDefinition>
         const names = { ...keyCond.names, '#type': 'type' };
         const values = { ...keyCond.values, ':type': def.type };
 
-        const results: ResolvedEntity<E[typeof key]>[] = [];
+        const results: ResolvedEntity<E[typeof key], Actor>[] = [];
         let exclusiveStartKey: Record<string, unknown> | undefined;
 
         do {
@@ -270,7 +321,7 @@ export const createDynamoClient = <E extends Record<string, AnyEntityDefinition>
           );
 
           for (const item of Items ?? []) {
-            results.push(item as ResolvedEntity<E[typeof key]>);
+            results.push(item as ResolvedEntity<E[typeof key], Actor>);
             if (limit !== undefined && results.length >= limit) return results;
           }
 

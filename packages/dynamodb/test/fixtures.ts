@@ -1,11 +1,28 @@
 import { defineEntity } from '../src';
 
+export type Actor = { id: string };
+
+export const TEST_ACTOR: Actor = { id: 'tester' };
+
+export const getActor = (): Actor => TEST_ACTOR;
+
 export const userEntity = defineEntity<'USER', UserItem, ['GSI1']>(
   'USER',
   { indexes: ['GSI1'] },
 );
 
-export const entities = { user: userEntity };
+type CacheItem = {
+  PK: `CACHE#${string}`;
+  SK: `CACHE#${string}`;
+  value: string;
+};
+
+export const cacheEntity = defineEntity<'CACHE', CacheItem, [], false>(
+  'CACHE',
+  { audit: false },
+);
+
+export const entities = { user: userEntity, cache: cacheEntity };
 
 type UserItem = {
   PK: `USER#${string}`;
