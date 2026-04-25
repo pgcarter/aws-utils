@@ -34,6 +34,25 @@ createStreamProcessor({ entities }).on(['INSERT', 'MODIFY'], 'user', async (arg)
 const { batchItemFailures } = await processor.process(records);
 ```
 
+## Lambda
+
+Wrap a processor with `toLambdaHandler` to get a Lambda-shaped function. Configure your event source mapping with `ReportBatchItemFailures` so DynamoDB Streams retries only the failed records.
+
+```ts
+import { createStreamProcessor, toLambdaHandler } from '@bewdym8/dynamodb-streams';
+import { entities } from './entities';
+
+const processor = createStreamProcessor({ entities }).on(
+  'INSERT',
+  'user',
+  async ({ entity }) => {},
+);
+
+export const handler = toLambdaHandler(processor);
+```
+
+The adapter is the only place this package touches Lambda types — install `@types/aws-lambda` if you use it; non-Lambda consumers can skip it (it's an optional peer dependency).
+
 ## Required table configuration
 
 The processor assumes the table's stream is configured with `StreamViewType: NEW_AND_OLD_IMAGES`. Any other view type causes `.process()` to throw with a directly actionable message — `INSERT` needs `NewImage`, `REMOVE` needs `OldImage`, and `MODIFY` needs both.

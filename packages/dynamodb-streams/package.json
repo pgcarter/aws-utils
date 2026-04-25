@@ -11,7 +11,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
@@ -23,5 +25,16 @@
     "@aws-sdk/client-dynamodb-streams": "^3.693.0",
     "@aws-sdk/util-dynamodb": "^3.693.0",
     "@bewdym8/dynamodb": "workspace:*"
+  },
+  "peerDependencies": {
+    "@types/aws-lambda": "^8.10.0"
+  },
+  "peerDependenciesMeta": {
+    "@types/aws-lambda": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.161"
   }
 }

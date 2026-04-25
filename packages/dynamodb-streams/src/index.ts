@@ -3,6 +3,7 @@ export type {
   CreateStreamProcessorOptions,
   StreamProcessor,
 } from './processor';
+export { toLambdaHandler } from './lambda';
 export type {
   BatchItemFailure,
   DynamoDBRecord,
