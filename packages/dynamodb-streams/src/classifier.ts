@@ -3,6 +3,8 @@ import { unmarshall } from '@aws-sdk/util-dynamodb';
 import type { EntityKey } from '@bewdym8/dynamodb';
 import type { DynamoDBRecord, EntityMap, RecordMeta } from './types';
 
+export type MissingImage = 'NewImage' | 'OldImage' | 'NewImage and OldImage';
+
 export type ClassifiedRecord =
   | {
       kind: 'insert';
@@ -24,7 +26,13 @@ export type ClassifiedRecord =
       meta: RecordMeta;
     }
   | { kind: 'skip' }
-  | { kind: 'unknown-type'; type: string; meta: RecordMeta };
+  | { kind: 'unknown-type'; type: string; meta: RecordMeta }
+  | {
+      kind: 'missing-image';
+      event: 'INSERT' | 'MODIFY' | 'REMOVE';
+      missing: MissingImage;
+      meta: RecordMeta;
+    };
 
 type UnmarshallInput = Parameters<typeof unmarshall>[0];
 
@@ -58,7 +66,14 @@ export const classifyRecord = (
 ): ClassifiedRecord => {
   if (record.eventName === 'INSERT') {
     const newImage = record.dynamodb?.NewImage;
-    if (!newImage) return { kind: 'skip' };
+    if (!newImage) {
+      return {
+        kind: 'missing-image',
+        event: 'INSERT',
+        missing: 'NewImage',
+        meta: extractMeta(record),
+      };
+    }
     const entity = unmarshallImage(newImage);
     const type = entity.type;
     if (typeof type !== 'string') return { kind: 'skip' };
@@ -76,7 +91,20 @@ export const classifyRecord = (
   if (record.eventName === 'MODIFY') {
     const newImage = record.dynamodb?.NewImage;
     const oldImage = record.dynamodb?.OldImage;
-    if (!newImage || !oldImage) return { kind: 'skip' };
+    if (!newImage || !oldImage) {
+      const missing: MissingImage =
+        !newImage && !oldImage
+          ? 'NewImage and OldImage'
+          : !newImage
+            ? 'NewImage'
+            : 'OldImage';
+      return {
+        kind: 'missing-image',
+        event: 'MODIFY',
+        missing,
+        meta: extractMeta(record),
+      };
+    }
     const newEntity = unmarshallImage(newImage);
     const oldEntity = unmarshallImage(oldImage);
     const type = newEntity.type;
@@ -95,7 +123,14 @@ export const classifyRecord = (
   }
   if (record.eventName === 'REMOVE') {
     const oldImage = record.dynamodb?.OldImage;
-    if (!oldImage) return { kind: 'skip' };
+    if (!oldImage) {
+      return {
+        kind: 'missing-image',
+        event: 'REMOVE',
+        missing: 'OldImage',
+        meta: extractMeta(record),
+      };
+    }
     const entity = unmarshallImage(oldImage);
     const type = entity.type;
     if (typeof type !== 'string') return { kind: 'skip' };

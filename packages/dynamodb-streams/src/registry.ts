@@ -9,7 +9,13 @@ export class HandlerRegistry {
   private readonly cells = new Map<string, RegistryHandler>();
 
   register(event: StreamEvent, entityName: string, handler: RegistryHandler): void {
-    this.cells.set(cellKey(event, entityName), handler);
+    const key = cellKey(event, entityName);
+    if (this.cells.has(key)) {
+      throw new Error(
+        `[dynamodb-streams] duplicate handler registration for ${event}:${entityName}`,
+      );
+    }
+    this.cells.set(key, handler);
   }
 
   lookup(event: StreamEvent, entityName: string): RegistryHandler | undefined {

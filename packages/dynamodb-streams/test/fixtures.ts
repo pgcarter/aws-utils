@@ -52,12 +52,14 @@ export const insertRecord = (
     sk?: string;
     type?: string | null;
     name?: string;
+    images?: 'new' | 'none';
   } = {},
 ): DynamoDBRecord => {
   const pk = overrides.pk ?? 'USER#1';
   const sk = overrides.sk ?? pk;
   const type = overrides.type === null ? undefined : (overrides.type ?? 'USER');
   const name = overrides.name ?? 'Alice';
+  const images = overrides.images ?? 'new';
   const newImage = buildUserImage(pk, sk, name, type);
   return {
     eventID: overrides.eventID ?? 'evt-1',
@@ -67,7 +69,7 @@ export const insertRecord = (
     dynamodb: {
       ApproximateCreationDateTime: new Date(NOW_ISO),
       Keys: { PK: { S: pk }, SK: { S: sk } } as never,
-      NewImage: newImage as never,
+      ...(images === 'new' && { NewImage: newImage as never }),
       SequenceNumber: overrides.sequenceNumber ?? '0000001',
       SizeBytes: 100,
       StreamViewType: 'NEW_AND_OLD_IMAGES',

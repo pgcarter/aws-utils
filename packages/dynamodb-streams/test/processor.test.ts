@@ -257,4 +257,109 @@ describe('createStreamProcessor', () => {
 
     await processor.process([removeRecord()]);
   });
+
+  describe('error path hardening', () => {
+    it('throws on a record whose type is not in the entities map', async () => {
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        'INSERT',
+        'user',
+        async () => {},
+      );
+
+      await expect(
+        processor.process([insertRecord({ type: 'GHOST', eventID: 'evt-ghost' })]),
+      ).rejects.toThrow(/GHOST/);
+    });
+
+    it('throws on a MODIFY record missing the OldImage, naming the view-type fix', async () => {
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        'MODIFY',
+        'user',
+        async () => {},
+      );
+
+      await expect(
+        processor.process([modifyRecord({ images: 'new-only' })]),
+      ).rejects.toThrow(/NEW_AND_OLD_IMAGES/);
+    });
+
+    it('throws on a REMOVE record missing the OldImage, naming the view-type fix', async () => {
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        'REMOVE',
+        'user',
+        async () => {},
+      );
+
+      await expect(
+        processor.process([removeRecord({ images: 'none' })]),
+      ).rejects.toThrow(/NEW_AND_OLD_IMAGES/);
+    });
+
+    it('throws on an INSERT record missing the NewImage', async () => {
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        'INSERT',
+        'user',
+        async () => {},
+      );
+
+      await expect(
+        processor.process([insertRecord({ images: 'none' })]),
+      ).rejects.toThrow(/NEW_AND_OLD_IMAGES/);
+    });
+
+    it('throws synchronously on duplicate (event, entityName) registration', () => {
+      const builder = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        'INSERT',
+        'user',
+        async () => {},
+      );
+
+      expect(() => builder.on('INSERT', 'user', async () => {})).toThrowError(
+        /INSERT:user/,
+      );
+    });
+
+    it('records a handler rejection in batchItemFailures and continues processing', async () => {
+      const calls: string[] = [];
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        'INSERT',
+        'user',
+        async ({ sequenceNumber }) => {
+          calls.push(sequenceNumber);
+          if (sequenceNumber === 'seq-bad') throw new Error('handler failed');
+        },
+      );
+
+      const result = await processor.process([
+        insertRecord({ pk: 'USER#1', sequenceNumber: 'seq-1' }),
+        insertRecord({ pk: 'USER#2', sequenceNumber: 'seq-bad' }),
+        insertRecord({ pk: 'USER#3', sequenceNumber: 'seq-3' }),
+      ]);
+
+      expect(calls).toEqual(['seq-1', 'seq-bad', 'seq-3']);
+      expect(result).toEqual({
+        batchItemFailures: [{ itemIdentifier: 'seq-bad' }],
+      });
+    });
+
+    it('preserves per-batch processing order across a mixed batch', async () => {
+      const seen: string[] = [];
+      const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+        'INSERT',
+        'user',
+        async ({ sequenceNumber }) => {
+          seen.push(sequenceNumber);
+        },
+      );
+
+      const result = await processor.process([
+        insertRecord({ pk: 'USER#1', sequenceNumber: 'seq-1' }),
+        insertRecord({ type: null, sequenceNumber: 'seq-skip' }),
+        insertRecord({ pk: 'USER#3', sequenceNumber: 'seq-3' }),
+      ]);
+
+      expect(seen).toEqual(['seq-1', 'seq-3']);
+      expect(result).toEqual({ batchItemFailures: [] });
+    });
+  });
 });

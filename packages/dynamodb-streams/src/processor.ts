@@ -39,30 +39,38 @@ export const createStreamProcessor = <
       const failures: ProcessResult['batchItemFailures'] = [];
       for (const record of records) {
         const classified = classifyRecord(record, entities);
-        if (classified.kind === 'skip' || classified.kind === 'unknown-type') {
-          continue;
+        if (classified.kind === 'skip') continue;
+        if (classified.kind === 'unknown-type') {
+          throw new Error(
+            `[dynamodb-streams] unknown entity type "${classified.type}" on record ${classified.meta.eventID || classified.meta.sequenceNumber}; add it to the entities map or remove the deploy skew`,
+          );
         }
+        if (classified.kind === 'missing-image') {
+          throw new Error(
+            `[dynamodb-streams] ${classified.event} record ${classified.meta.eventID || classified.meta.sequenceNumber} is missing ${classified.missing}; configure the table's StreamViewType to NEW_AND_OLD_IMAGES`,
+          );
+        }
+        let handler: ((arg: unknown) => void | Promise<void>) | undefined;
+        let arg: unknown;
         if (classified.kind === 'insert') {
-          const handler = registry.lookup('INSERT', classified.entityName);
-          if (!handler) continue;
-          await handler({ entity: classified.entity, ...classified.meta });
-          continue;
-        }
-        if (classified.kind === 'modify') {
-          const handler = registry.lookup('MODIFY', classified.entityName);
-          if (!handler) continue;
-          await handler({
+          handler = registry.lookup('INSERT', classified.entityName);
+          arg = { entity: classified.entity, ...classified.meta };
+        } else if (classified.kind === 'modify') {
+          handler = registry.lookup('MODIFY', classified.entityName);
+          arg = {
             oldEntity: classified.oldEntity,
             newEntity: classified.newEntity,
             ...classified.meta,
-          });
-          continue;
+          };
+        } else if (classified.kind === 'remove') {
+          handler = registry.lookup('REMOVE', classified.entityName);
+          arg = { entity: classified.entity, ...classified.meta };
         }
-        if (classified.kind === 'remove') {
-          const handler = registry.lookup('REMOVE', classified.entityName);
-          if (!handler) continue;
-          await handler({ entity: classified.entity, ...classified.meta });
-          continue;
+        if (!handler) continue;
+        try {
+          await handler(arg);
+        } catch {
+          failures.push({ itemIdentifier: classified.meta.sequenceNumber });
         }
       }
       return { batchItemFailures: failures };

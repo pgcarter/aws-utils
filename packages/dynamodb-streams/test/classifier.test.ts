@@ -44,6 +44,18 @@ describe('classifyRecord', () => {
         expect(result.meta.eventID).toBe('evt-1');
       }
     });
+
+    it('returns missing-image when the NewImage is absent', () => {
+      const record = insertRecord({ images: 'none', sequenceNumber: 'seq-99' });
+      const result = classifyRecord(record, entities);
+
+      expect(result.kind).toBe('missing-image');
+      if (result.kind === 'missing-image') {
+        expect(result.event).toBe('INSERT');
+        expect(result.missing).toBe('NewImage');
+        expect(result.meta.sequenceNumber).toBe('seq-99');
+      }
+    });
   });
 
   describe('MODIFY', () => {
@@ -100,14 +112,27 @@ describe('classifyRecord', () => {
       }
     });
 
-    it('skips a MODIFY record missing the OldImage in this slice', () => {
-      const record = modifyRecord({ images: 'new-only' });
-      expect(classifyRecord(record, entities)).toEqual({ kind: 'skip' });
+    it('returns missing-image for a MODIFY record missing the OldImage', () => {
+      const record = modifyRecord({ images: 'new-only', sequenceNumber: 'seq-12' });
+      const result = classifyRecord(record, entities);
+
+      expect(result.kind).toBe('missing-image');
+      if (result.kind === 'missing-image') {
+        expect(result.event).toBe('MODIFY');
+        expect(result.missing).toBe('OldImage');
+        expect(result.meta.sequenceNumber).toBe('seq-12');
+      }
     });
 
-    it('skips a MODIFY record missing the NewImage in this slice', () => {
+    it('returns missing-image for a MODIFY record missing the NewImage', () => {
       const record = modifyRecord({ images: 'old-only' });
-      expect(classifyRecord(record, entities)).toEqual({ kind: 'skip' });
+      const result = classifyRecord(record, entities);
+
+      expect(result.kind).toBe('missing-image');
+      if (result.kind === 'missing-image') {
+        expect(result.event).toBe('MODIFY');
+        expect(result.missing).toBe('NewImage');
+      }
     });
   });
 
@@ -152,9 +177,16 @@ describe('classifyRecord', () => {
       }
     });
 
-    it('skips a REMOVE record missing the OldImage in this slice', () => {
-      const record = removeRecord({ images: 'none' });
-      expect(classifyRecord(record, entities)).toEqual({ kind: 'skip' });
+    it('returns missing-image for a REMOVE record missing the OldImage', () => {
+      const record = removeRecord({ images: 'none', sequenceNumber: 'seq-77' });
+      const result = classifyRecord(record, entities);
+
+      expect(result.kind).toBe('missing-image');
+      if (result.kind === 'missing-image') {
+        expect(result.event).toBe('REMOVE');
+        expect(result.missing).toBe('OldImage');
+        expect(result.meta.sequenceNumber).toBe('seq-77');
+      }
     });
   });
 });

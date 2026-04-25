@@ -26,4 +26,21 @@ describe('HandlerRegistry', () => {
     expect(registry.lookup('INSERT', 'cache')).toBe(insertCache);
     expect(registry.lookup('MODIFY', 'user')).toBeUndefined();
   });
+
+  it('throws on duplicate (event, entityName) registration with the conflicting cell named', () => {
+    const registry = new HandlerRegistry();
+    registry.register('INSERT', 'user', async () => {});
+    expect(() => registry.register('INSERT', 'user', async () => {})).toThrowError(
+      /INSERT:user/,
+    );
+  });
+
+  it('allows the same handler function to be registered against different cells', () => {
+    const registry = new HandlerRegistry();
+    const fn = async () => {};
+    registry.register('INSERT', 'user', fn);
+    expect(() => registry.register('MODIFY', 'user', fn)).not.toThrow();
+    expect(registry.lookup('INSERT', 'user')).toBe(fn);
+    expect(registry.lookup('MODIFY', 'user')).toBe(fn);
+  });
 });
