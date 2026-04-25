@@ -10,6 +10,7 @@ export type {
   Handler,
   HandlerArg,
   InsertArg,
+  ModifyArg,
   ProcessResult,
   RecordMeta,
   StreamEvent,

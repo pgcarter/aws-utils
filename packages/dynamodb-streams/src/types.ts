@@ -25,12 +25,24 @@ export interface InsertArg<
   entity: ResolvedEntity<D, Actor>;
 }
 
+export interface ModifyArg<
+  D extends AnyEntityDefinition,
+  Actor extends object = object,
+> extends RecordMeta {
+  oldEntity: ResolvedEntity<D, Actor>;
+  newEntity: ResolvedEntity<D, Actor>;
+}
+
 export type HandlerArg<
   Event extends StreamEvent,
   Entities extends EntityMap,
   Name extends keyof Entities,
   Actor extends object = object,
-> = Event extends 'INSERT' ? InsertArg<Entities[Name], Actor> : never;
+> = Event extends 'INSERT'
+  ? InsertArg<Entities[Name], Actor>
+  : Event extends 'MODIFY'
+    ? ModifyArg<Entities[Name], Actor>
+    : never;
 
 export type Handler<
   Event extends StreamEvent,

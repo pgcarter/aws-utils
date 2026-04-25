@@ -10,6 +10,13 @@ export type ClassifiedRecord =
       entity: Record<string, unknown>;
       meta: RecordMeta;
     }
+  | {
+      kind: 'modify';
+      entityName: string;
+      oldEntity: Record<string, unknown>;
+      newEntity: Record<string, unknown>;
+      meta: RecordMeta;
+    }
   | { kind: 'skip' }
   | { kind: 'unknown-type'; type: string; meta: RecordMeta };
 
@@ -57,6 +64,26 @@ export const classifyRecord = (
       kind: 'insert',
       entityName,
       entity,
+      meta: extractMeta(record),
+    };
+  }
+  if (record.eventName === 'MODIFY') {
+    const newImage = record.dynamodb?.NewImage;
+    const oldImage = record.dynamodb?.OldImage;
+    if (!newImage || !oldImage) return { kind: 'skip' };
+    const newEntity = unmarshallImage(newImage);
+    const oldEntity = unmarshallImage(oldImage);
+    const type = newEntity.type;
+    if (typeof type !== 'string') return { kind: 'skip' };
+    const entityName = findEntityName(entities, type);
+    if (!entityName) {
+      return { kind: 'unknown-type', type, meta: extractMeta(record) };
+    }
+    return {
+      kind: 'modify',
+      entityName,
+      oldEntity,
+      newEntity,
       meta: extractMeta(record),
     };
   }

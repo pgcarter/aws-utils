@@ -42,9 +42,22 @@ export const createStreamProcessor = <
         if (classified.kind === 'skip' || classified.kind === 'unknown-type') {
           continue;
         }
-        const handler = registry.lookup('INSERT', classified.entityName);
-        if (!handler) continue;
-        await handler({ entity: classified.entity, ...classified.meta });
+        if (classified.kind === 'insert') {
+          const handler = registry.lookup('INSERT', classified.entityName);
+          if (!handler) continue;
+          await handler({ entity: classified.entity, ...classified.meta });
+          continue;
+        }
+        if (classified.kind === 'modify') {
+          const handler = registry.lookup('MODIFY', classified.entityName);
+          if (!handler) continue;
+          await handler({
+            oldEntity: classified.oldEntity,
+            newEntity: classified.newEntity,
+            ...classified.meta,
+          });
+          continue;
+        }
       }
       return { batchItemFailures: failures };
     },
