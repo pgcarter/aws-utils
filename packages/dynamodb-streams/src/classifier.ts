@@ -17,6 +17,12 @@ export type ClassifiedRecord =
       newEntity: Record<string, unknown>;
       meta: RecordMeta;
     }
+  | {
+      kind: 'remove';
+      entityName: string;
+      entity: Record<string, unknown>;
+      meta: RecordMeta;
+    }
   | { kind: 'skip' }
   | { kind: 'unknown-type'; type: string; meta: RecordMeta };
 
@@ -84,6 +90,23 @@ export const classifyRecord = (
       entityName,
       oldEntity,
       newEntity,
+      meta: extractMeta(record),
+    };
+  }
+  if (record.eventName === 'REMOVE') {
+    const oldImage = record.dynamodb?.OldImage;
+    if (!oldImage) return { kind: 'skip' };
+    const entity = unmarshallImage(oldImage);
+    const type = entity.type;
+    if (typeof type !== 'string') return { kind: 'skip' };
+    const entityName = findEntityName(entities, type);
+    if (!entityName) {
+      return { kind: 'unknown-type', type, meta: extractMeta(record) };
+    }
+    return {
+      kind: 'remove',
+      entityName,
+      entity,
       meta: extractMeta(record),
     };
   }

@@ -13,5 +13,6 @@ export type {
   ModifyArg,
   ProcessResult,
   RecordMeta,
+  RemoveArg,
   StreamEvent,
 } from './types';

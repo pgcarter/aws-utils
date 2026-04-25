@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createStreamProcessor } from '../src';
-import { type Actor, entities, insertRecord, modifyRecord } from './fixtures';
+import {
+  type Actor,
+  entities,
+  insertRecord,
+  modifyRecord,
+  removeRecord,
+} from './fixtures';
 
 describe('createStreamProcessor', () => {
   it('invokes the registered INSERT handler with the unmarshalled entity and record metadata', async () => {
@@ -68,19 +74,17 @@ describe('createStreamProcessor', () => {
     expect(result).toEqual({ batchItemFailures: [] });
   });
 
-  it('silently skips REMOVE records in this slice', async () => {
-    const handler = vi.fn(async () => {});
+  it('does not dispatch a REMOVE record to an INSERT-only handler for the same entity', async () => {
+    const insertHandler = vi.fn(async () => {});
     const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
       'INSERT',
       'user',
-      handler,
+      insertHandler,
     );
 
-    const removeRecord = { ...insertRecord(), eventName: 'REMOVE' as const };
+    await processor.process([removeRecord()]);
 
-    await processor.process([removeRecord]);
-
-    expect(handler).not.toHaveBeenCalled();
+    expect(insertHandler).not.toHaveBeenCalled();
   });
 
   it('invokes the registered MODIFY handler with both old and new entities and metadata', async () => {
@@ -189,5 +193,68 @@ describe('createStreamProcessor', () => {
     );
 
     await processor.process([modifyRecord()]);
+  });
+
+  it('invokes the registered REMOVE handler with the deleted entity and metadata', async () => {
+    const calls: unknown[] = [];
+    const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+      'REMOVE',
+      'user',
+      async (arg) => {
+        calls.push(arg);
+      },
+    );
+
+    const result = await processor.process([
+      removeRecord({ pk: 'USER#42', name: 'Alice', sequenceNumber: 'seq-42' }),
+    ]);
+
+    expect(result).toEqual({ batchItemFailures: [] });
+    expect(calls).toHaveLength(1);
+    const arg = calls[0] as {
+      entity: Record<string, unknown>;
+      key: { PK: string; SK: string };
+      eventID: string;
+      sequenceNumber: string;
+    };
+    expect(arg.entity).toMatchObject({
+      PK: 'USER#42',
+      SK: 'USER#42',
+      type: 'USER',
+      name: 'Alice',
+      email: 'alice@example.com',
+    });
+    expect(arg.key).toEqual({ PK: 'USER#42', SK: 'USER#42' });
+    expect(arg.sequenceNumber).toBe('seq-42');
+  });
+
+  it('silently skips a REMOVE record whose entity has no registered REMOVE handler', async () => {
+    const removeHandler = vi.fn(async () => {});
+    const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+      'REMOVE',
+      'user',
+      removeHandler,
+    );
+
+    await processor.process([
+      removeRecord({ pk: 'CACHE#1', sk: 'CACHE#1', type: 'CACHE' }),
+    ]);
+
+    expect(removeHandler).not.toHaveBeenCalled();
+  });
+
+  it('passes a typed entity to a REMOVE handler at compile time (sanity)', async () => {
+    const processor = createStreamProcessor<typeof entities, Actor>({ entities }).on(
+      'REMOVE',
+      'user',
+      async ({ entity }) => {
+        const _name: string = entity.name;
+        const _by: Actor = entity.modifiedBy;
+        void _name;
+        void _by;
+      },
+    );
+
+    await processor.process([removeRecord()]);
   });
 });

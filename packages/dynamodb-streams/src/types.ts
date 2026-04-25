@@ -33,6 +33,13 @@ export interface ModifyArg<
   newEntity: ResolvedEntity<D, Actor>;
 }
 
+export interface RemoveArg<
+  D extends AnyEntityDefinition,
+  Actor extends object = object,
+> extends RecordMeta {
+  entity: ResolvedEntity<D, Actor>;
+}
+
 export type HandlerArg<
   Event extends StreamEvent,
   Entities extends EntityMap,
@@ -42,7 +49,9 @@ export type HandlerArg<
   ? InsertArg<Entities[Name], Actor>
   : Event extends 'MODIFY'
     ? ModifyArg<Entities[Name], Actor>
-    : never;
+    : Event extends 'REMOVE'
+      ? RemoveArg<Entities[Name], Actor>
+      : never;
 
 export type Handler<
   Event extends StreamEvent,

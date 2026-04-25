@@ -58,6 +58,12 @@ export const createStreamProcessor = <
           });
           continue;
         }
+        if (classified.kind === 'remove') {
+          const handler = registry.lookup('REMOVE', classified.entityName);
+          if (!handler) continue;
+          await handler({ entity: classified.entity, ...classified.meta });
+          continue;
+        }
       }
       return { batchItemFailures: failures };
     },

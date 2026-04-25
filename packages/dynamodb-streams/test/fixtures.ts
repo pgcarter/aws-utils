@@ -75,6 +75,39 @@ export const insertRecord = (
   };
 };
 
+export const removeRecord = (
+  overrides: {
+    eventID?: string;
+    sequenceNumber?: string;
+    pk?: string;
+    sk?: string;
+    type?: string | null;
+    name?: string;
+    images?: 'old' | 'none';
+  } = {},
+): DynamoDBRecord => {
+  const pk = overrides.pk ?? 'USER#1';
+  const sk = overrides.sk ?? pk;
+  const type = overrides.type === null ? undefined : (overrides.type ?? 'USER');
+  const name = overrides.name ?? 'Alice';
+  const images = overrides.images ?? 'old';
+  const oldImage = buildUserImage(pk, sk, name, type);
+  return {
+    eventID: overrides.eventID ?? 'evt-1',
+    eventName: 'REMOVE',
+    eventSource: 'aws:dynamodb',
+    awsRegion: 'us-east-1',
+    dynamodb: {
+      ApproximateCreationDateTime: new Date(NOW_ISO),
+      Keys: { PK: { S: pk }, SK: { S: sk } } as never,
+      ...(images === 'old' && { OldImage: oldImage as never }),
+      SequenceNumber: overrides.sequenceNumber ?? '0000001',
+      SizeBytes: 100,
+      StreamViewType: 'NEW_AND_OLD_IMAGES',
+    },
+  };
+};
+
 export const modifyRecord = (
   overrides: {
     eventID?: string;
