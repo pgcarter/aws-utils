@@ -2,6 +2,10 @@
 
 A pnpm workspace of small, type-safe wrappers around the AWS SDK v3.
 
+![Claude Code for Real Engineers — 2026-04](https://res.cloudinary.com/total-typescript/image/upload/v1777093044/certificate/f19a3d0b-da7d-4609-9554-bccb84eb9318/claude-code-for-real-engineers-2026-04.png)
+
+Built while following the [Claude Code for Real Engineers](https://res.cloudinary.com/total-typescript/image/upload/v1777093044/certificate/f19a3d0b-da7d-4609-9554-bccb84eb9318/claude-code-for-real-engineers-2026-04.png) course.
+
 ## Packages
 
 | Package | Description |
