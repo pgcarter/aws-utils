@@ -372,7 +372,7 @@ describe('delete', () => {
 
 // Type-only narrowing guard: strict:true narrows the return to non-undefined.
 async function _deleteStrictReturnIsNonNullable(client: typeof db) {
-  const key = { PK: 'USER#x', SK: 'USER#x' };
+  const key = { PK: 'USER#x', SK: 'USER#x' } as const;
   const removed = await client.user.delete(key, { strict: true });
   // Should not require a null check — non-nullable in strict mode.
   removed.PK;
@@ -400,7 +400,7 @@ void _putRejectsAuditFieldsAtCompileTime;
 
 // Type-only spoof guard: callers cannot pass audit fields to update().
 function _updateRejectsAuditFieldsAtCompileTime(client: typeof db) {
-  const key = { PK: 'USER#x', SK: 'USER#x' };
+  const key = { PK: 'USER#x', SK: 'USER#x' } as const;
   // @ts-expect-error - createdAt is reserved by audit
   client.user.update(key, { createdAt: '2020-01-01T00:00:00.000Z' });
   // @ts-expect-error - createdBy is reserved by audit
