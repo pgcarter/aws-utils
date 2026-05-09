@@ -26,10 +26,6 @@ export type Entity<
   TSK extends string = string,
 > = BaseEntity<TPK, TSK> & { type: TType };
 
-type IndexFields<TIndexes extends IndexName> = {
-  [K in `${TIndexes}PK` | `${TIndexes}SK`]?: string;
-};
-
 export type AuditFieldKey = 'createdAt' | 'createdBy' | 'modifiedAt' | 'modifiedBy';
 
 export type AuditFields<Actor extends object> = {
@@ -41,9 +37,7 @@ export type AuditFields<Actor extends object> = {
 
 export interface EntityDefinition<
   TType extends string = string,
-  TAttrs extends object = object,
-  TPK extends string = string,
-  TSK extends string = string,
+  TAttrs extends BaseEntity = BaseEntity,
   TIndexes extends IndexName = never,
   TAudit extends boolean = true,
 > {
@@ -51,21 +45,17 @@ export interface EntityDefinition<
   audit: TAudit;
   indexes: readonly TIndexes[];
   readonly __attrs?: TAttrs;
-  readonly __pk?: TPK;
-  readonly __sk?: TSK;
 }
 
 export const defineEntity = <
   TType extends string,
-  TAttrs extends object = object,
-  TPK extends string = string,
-  TSK extends string = string,
+  TAttrs extends BaseEntity,
   const TIndexes extends readonly IndexName[] = readonly [],
   const TAudit extends boolean = true,
 >(
   type: TType extends Uppercase<TType> ? TType : never,
   options?: { indexes?: TIndexes; audit?: TAudit },
-): EntityDefinition<TType, TAttrs, TPK, TSK, TIndexes[number], TAudit> => ({
+): EntityDefinition<TType, TAttrs, TIndexes[number], TAudit> => ({
   type,
   audit: (options?.audit ?? true) as TAudit,
   indexes: (options?.indexes ?? []) as readonly TIndexes[number][],
@@ -74,55 +64,25 @@ export const defineEntity = <
 export type ResolvedEntity<D, Actor extends object> = D extends EntityDefinition<
   infer T,
   infer A,
-  infer PK,
-  infer SK,
-  infer I,
+  IndexName,
   infer Audit
 >
-  ? BaseEntity<PK, SK> &
-      IndexFields<I> &
-      A & { type: T } &
-      (Audit extends true ? AuditFields<Actor> : object)
+  ? A & { type: T } & (Audit extends true ? AuditFields<Actor> : object)
   : never;
 
 type ForbiddenAuditKeys = { [K in AuditFieldKey]?: never };
 
-type PutInput<D> = D extends EntityDefinition<
-  string,
-  infer A,
-  infer PK,
-  infer SK,
-  infer I,
-  infer Audit
->
-  ? BaseEntity<PK, SK> &
-      IndexFields<I> &
-      Omit<A, AuditFieldKey> &
+type PutInput<D> = D extends EntityDefinition<string, infer A, IndexName, infer Audit>
+  ? Omit<A, AuditFieldKey> & (Audit extends true ? ForbiddenAuditKeys : object)
+  : never;
+
+type UpdatePatch<D> = D extends EntityDefinition<string, infer A, IndexName, infer Audit>
+  ? Omit<A, keyof BaseEntity | AuditFieldKey> &
       (Audit extends true ? ForbiddenAuditKeys : object)
   : never;
 
-type UpdatePatch<D> = D extends EntityDefinition<
-  string,
-  infer A,
-  string,
-  string,
-  infer I,
-  infer Audit
->
-  ? IndexFields<I> &
-      Omit<A, keyof BaseEntity | AuditFieldKey> &
-      (Audit extends true ? ForbiddenAuditKeys : object)
-  : never;
-
-type UpdateInput<D> = D extends EntityDefinition<
-  string,
-  infer A,
-  string,
-  string,
-  infer I,
-  infer Audit
->
-  ? Partial<IndexFields<I> & Omit<A, keyof BaseEntity | 'type' | AuditFieldKey>> &
+type UpdateInput<D> = D extends EntityDefinition<string, infer A, IndexName, infer Audit>
+  ? Partial<Omit<A, keyof BaseEntity | 'type' | AuditFieldKey>> &
       (Audit extends true ? ForbiddenAuditKeys : object)
   : never;
 
@@ -130,15 +90,8 @@ type OptionalKeys<T> = {
   [K in keyof T]-?: object extends Pick<T, K> ? K : never;
 }[keyof T];
 
-type RemovableKeys<D> = D extends EntityDefinition<
-  string,
-  infer A,
-  string,
-  string,
-  infer I,
-  boolean
->
-  ? OptionalKeys<IndexFields<I> & Omit<A, keyof BaseEntity | 'type' | AuditFieldKey>> & string
+type RemovableKeys<D> = D extends EntityDefinition<string, infer A, IndexName, boolean>
+  ? OptionalKeys<Omit<A, keyof BaseEntity | 'type' | AuditFieldKey>> & string
   : never;
 
 export type SkCondition =
@@ -150,57 +103,34 @@ export type SkCondition =
   | { gt: string }
   | { gte: string };
 
-type IndexOption<D> = D extends EntityDefinition<
+type BaseQueryParams = {
+  sk?: SkCondition;
+  limit?: number;
+};
+
+type IndexQueryParams<A extends BaseEntity, I extends IndexName> = {
+  [Idx in I]: {
+    index: Idx;
+    pk: NonNullable<A[`${Idx}PK` & keyof A]>;
+  } & BaseQueryParams;
+}[I];
+
+export type QueryParams<D> = D extends EntityDefinition<
   string,
-  object,
-  string,
-  string,
+  infer A,
   infer I,
   boolean
 >
-  ? [I] extends [never]
-    ? { index?: never }
-    : { index?: I }
+  ?
+      | ({ index?: never; pk: A['PK'] } & BaseQueryParams)
+      | IndexQueryParams<A, I>
   : never;
 
-export type QueryParams<D> = {
-  pk: string;
-  sk?: SkCondition;
-  limit?: number;
-} & IndexOption<D>;
+export type AnyEntityDefinition = EntityDefinition<string, BaseEntity, IndexName, boolean>;
 
-export type AnyEntityDefinition = EntityDefinition<
-  string,
-  object,
-  string,
-  string,
-  IndexName,
-  boolean
->;
-
-type EntityPK<D> = D extends EntityDefinition<
-  string,
-  object,
-  infer PK,
-  string,
-  IndexName,
-  boolean
->
-  ? PK
+type DefKey<D> = D extends EntityDefinition<string, infer A, IndexName, boolean>
+  ? EntityKey<A['PK'], A['SK']>
   : never;
-
-type EntitySK<D> = D extends EntityDefinition<
-  string,
-  object,
-  string,
-  infer SK,
-  IndexName,
-  boolean
->
-  ? SK
-  : never;
-
-type DefKey<D> = EntityKey<EntityPK<D>, EntitySK<D>>;
 
 export type EntityOperations<D extends AnyEntityDefinition, Actor extends object> = {
   put: (entity: PutInput<D>) => Promise<ResolvedEntity<D, Actor>>;

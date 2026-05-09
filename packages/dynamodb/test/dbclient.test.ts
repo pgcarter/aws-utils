@@ -1,7 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDynamoClient, type DynamoClient } from '../src';
+import { createDynamoClient, defineEntity, type DynamoClient } from '../src';
 import { type Actor, entities, getActor, makeUser, TEST_ACTOR } from './fixtures';
 
 const endpoint = process.env.DYNAMODB_TEST_ENDPOINT!;
@@ -411,3 +411,38 @@ function _updateRejectsAuditFieldsAtCompileTime(client: typeof db) {
   client.user.update(key, { modifiedBy: { id: 'spoofed' } });
 }
 void _updateRejectsAuditFieldsAtCompileTime;
+
+// Type-only guard: pagedQuery typing flows from TAttrs.
+function _pagedQueryTypesPkFromAttrs(client: typeof db) {
+  // Base-table pk must match the entity's PK template literal.
+  // @ts-expect-error - 'NOTUSER#1' does not match `USER#${string}`
+  client.user.pagedQuery({ pk: 'NOTUSER#1' });
+
+  // GSI pk must match the declared GSI1PK literal type ('USERS').
+  // @ts-expect-error - 'USRS' typo does not match 'USERS'
+  client.user.pagedQuery({ index: 'GSI1', pk: 'USRS' });
+
+  // Positive case — exact match typechecks.
+  void client.user.pagedQuery({ index: 'GSI1', pk: 'USERS' });
+}
+void _pagedQueryTypesPkFromAttrs;
+
+// Type-only guard: defineEntity requires TAttrs to satisfy BaseEntity.
+function _defineEntityRequiresBaseEntityAttrs() {
+  // @ts-expect-error - { name: string } is missing PK and SK
+  defineEntity<'X', { name: string }>('X');
+}
+void _defineEntityRequiresBaseEntityAttrs;
+
+// Type-only guard: put rejects GSI fields not declared in attrs.
+function _putRejectsUndeclaredGsiFields(client: typeof db) {
+  // The cache entity declares no indexes and no GSI fields in its attrs.
+  client.cache.put({
+    PK: 'CACHE#1',
+    SK: 'CACHE#1',
+    value: 'v',
+    // @ts-expect-error - GSI1PK is not declared in CacheItem
+    GSI1PK: 'oops',
+  });
+}
+void _putRejectsUndeclaredGsiFields;

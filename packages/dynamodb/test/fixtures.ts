@@ -6,13 +6,9 @@ export const TEST_ACTOR: Actor = { id: 'tester' };
 
 export const getActor = (): Actor => TEST_ACTOR;
 
-export const userEntity = defineEntity<
-  'USER',
-  UserItem,
-  `USER#${string}`,
-  `USER#${string}`,
-  ['GSI1']
->('USER', { indexes: ['GSI1'] });
+export const userEntity = defineEntity<'USER', UserItem, ['GSI1']>('USER', {
+  indexes: ['GSI1'],
+});
 
 type CacheItem = {
   PK: `CACHE#${string}`;
@@ -20,14 +16,9 @@ type CacheItem = {
   value: string;
 };
 
-export const cacheEntity = defineEntity<
-  'CACHE',
-  CacheItem,
-  `CACHE#${string}`,
-  `CACHE#${string}`,
-  [],
-  false
->('CACHE', { audit: false });
+export const cacheEntity = defineEntity<'CACHE', CacheItem, [], false>('CACHE', {
+  audit: false,
+});
 
 export const entities = { user: userEntity, cache: cacheEntity };
 
