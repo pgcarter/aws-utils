@@ -1,17 +1,17 @@
-# @bewdym8/dynamodb-streams
+# @bm8/aws-dynamodb-streams
 
-A typed DynamoDB Streams record processor for entities defined with [`@bewdym8/dynamodb`](../dynamodb). Register handlers per `(eventName, entityName)`; the processor unmarshalls images, dispatches to the right handler with a typed entity, preserves per-shard ordering, and reports per-record failures via `batchItemFailures`.
+A typed DynamoDB Streams record processor for entities defined with [`@bm8/aws-dynamodb`](../aws-dynamodb). Register handlers per `(eventName, entityName)`; the processor unmarshalls images, dispatches to the right handler with a typed entity, preserves per-shard ordering, and reports per-record failures via `batchItemFailures`.
 
 ## Install
 
 ```sh
-pnpm add @bewdym8/dynamodb-streams
+pnpm add @bm8/aws-dynamodb-streams
 ```
 
 ## Quickstart
 
 ```ts
-import { createStreamProcessor } from '@bewdym8/dynamodb-streams';
+import { createStreamProcessor } from '@bm8/aws-dynamodb-streams';
 import { entities } from './entities'; // same map you pass to createDynamoClient
 
 const processor = createStreamProcessor({ entities })
@@ -39,7 +39,7 @@ const { batchItemFailures } = await processor.process(records);
 Wrap a processor with `toLambdaHandler` to get a Lambda-shaped function. Configure your event source mapping with `ReportBatchItemFailures` so DynamoDB Streams retries only the failed records.
 
 ```ts
-import { createStreamProcessor, toLambdaHandler } from '@bewdym8/dynamodb-streams';
+import { createStreamProcessor, toLambdaHandler } from '@bm8/aws-dynamodb-streams';
 import { entities } from './entities';
 
 const processor = createStreamProcessor({ entities }).on(
@@ -76,4 +76,4 @@ When a handler rejects, return the result from your Lambda configured with `Repo
 
 ## See also
 
-- [`@bewdym8/dynamodb`](../dynamodb) — the source of `EntityDefinition` and the shared `entities` map.
+- [`@bm8/aws-dynamodb`](../aws-dynamodb) — the source of `EntityDefinition` and the shared `entities` map.

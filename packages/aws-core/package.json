@@ -1,5 +1,5 @@
 {
-  "name": "@bewdym8/kinesis",
+  "name": "@bm8/aws-core",
   "version": "0.0.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,8 +18,15 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
-  "dependencies": {
-    "@aws-sdk/client-kinesis": "^3.693.0",
-    "@bewdym8/core": "workspace:*"
-  }
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pgcarter/aws-utils.git",
+    "directory": "packages/aws-core"
+  },
+  "license": "MIT",
+  "author": "Paul Carter"
 }

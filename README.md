@@ -10,10 +10,9 @@ Built while following the [Claude Code for Real Engineers](https://res.cloudinar
 
 | Package | Description |
 | --- | --- |
-| [`@bewdym8/dynamodb`](./packages/dynamodb/README.md) | Single-table DynamoDB client with typed entities, GSI support, and paginated queries. |
-| `@bewdym8/s3` | S3 helpers (presigned URLs, common operations). |
-| `@bewdym8/kinesis` | Kinesis helpers. |
-| `@bewdym8/core` | Shared utilities used across the other packages. |
+| [`@bm8/aws-dynamodb`](./packages/aws-dynamodb/README.md) | Single-table DynamoDB client with typed entities, GSI support, and paginated queries. |
+| [`@bm8/aws-dynamodb-streams`](./packages/aws-dynamodb-streams/README.md) | Typed DynamoDB Streams record processor for entities defined with `@bm8/aws-dynamodb`. |
+| `@bm8/aws-core` | Shared utilities used across the other packages. |
 
 ## Requirements
 
@@ -33,5 +32,13 @@ pnpm clean          # remove dist + tsbuildinfo
 To run a script against a single package:
 
 ```sh
-pnpm --filter @bewdym8/dynamodb test
+pnpm --filter @bm8/aws-dynamodb test
 ```
+
+
+alias dsc="docker sandbox run claude ."
+
+in claude
+
+- !gh auth login
+- 

@@ -7,5 +7,5 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   target: 'es2022',
-  external: ['@aws-sdk/client-dynamodb', '@aws-sdk/lib-dynamodb', '@bewdym8/core'],
+  external: ['@aws-sdk/client-dynamodb', '@aws-sdk/lib-dynamodb', '@bm8/aws-core'],
 });

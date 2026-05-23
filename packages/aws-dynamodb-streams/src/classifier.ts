@@ -1,6 +1,6 @@
 import type { AttributeValue } from '@aws-sdk/client-dynamodb-streams';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
-import type { EntityKey } from '@bewdym8/dynamodb';
+import type { EntityKey } from '@bm8/aws-dynamodb';
 import type { DynamoDBRecord, EntityMap, RecordMeta } from './types';
 
 export type MissingImage = 'NewImage' | 'OldImage' | 'NewImage and OldImage';

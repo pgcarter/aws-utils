@@ -9,6 +9,7 @@
     "clean": "pnpm -r clean && rm -rf **/*.tsbuildinfo"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@types/node": "^24.0.0",
     "tsup": "^8.3.5",
     "typescript": "^5.6.3",

@@ -3,13 +3,9 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: ['src/index.ts'],
   format: ['esm'],
-  dts: { compilerOptions: { composite: false } },
+  dts: true,
   clean: true,
   sourcemap: true,
   target: 'es2022',
-  external: [
-    '@aws-sdk/client-dynamodb-streams',
-    '@aws-sdk/util-dynamodb',
-    '@bewdym8/dynamodb',
-  ],
+  external: ['@aws-sdk/client-kinesis', '@bm8/aws-core'],
 });

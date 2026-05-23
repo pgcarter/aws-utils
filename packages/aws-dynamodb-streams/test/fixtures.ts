@@ -1,5 +1,5 @@
 import type { _Record as DynamoDBRecord } from '@aws-sdk/client-dynamodb-streams';
-import { defineEntity } from '@bewdym8/dynamodb';
+import { defineEntity } from '@bm8/aws-dynamodb';
 
 export type Actor = { id: string };
 

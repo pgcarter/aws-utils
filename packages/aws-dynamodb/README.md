@@ -1,11 +1,11 @@
-# @bewdym8/dynamodb
+# @bm8/aws-dynamodb
 
 A small, type-safe wrapper around `@aws-sdk/lib-dynamodb` for single-table DynamoDB designs. You declare your entities once with `defineEntity`, then `createDynamoClient` returns a per-entity client where `put`/`get`/`update`/`upsert`/`pagedQuery` are typed against the entity's attributes and indexes.
 
 ## Install
 
 ```sh
-pnpm add @bewdym8/dynamodb
+pnpm add @bm8/aws-dynamodb
 ```
 
 ## Concepts
@@ -17,7 +17,7 @@ pnpm add @bewdym8/dynamodb
 ## Defining entities
 
 ```ts
-import { defineEntity, type Entity } from '@bewdym8/dynamodb';
+import { defineEntity, type Entity } from '@bm8/aws-dynamodb';
 
 type UserAttrs = {
   PK: `USER#${string}`;
@@ -50,7 +50,7 @@ The first generic must be uppercase — the type tag is enforced as `Uppercase<T
 
 ```ts
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { createDynamoClient } from '@bewdym8/dynamodb';
+import { createDynamoClient } from '@bm8/aws-dynamodb';
 import { entities } from './entities';
 
 const db = createDynamoClient({
@@ -155,5 +155,5 @@ const users = await db.user.pagedQuery({
 The package's tests run against [`amazon/dynamodb-local`](./docker-compose.yml). With the container up:
 
 ```sh
-pnpm --filter @bewdym8/dynamodb test
+pnpm --filter @bm8/aws-dynamodb test
 ```

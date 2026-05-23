@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm build
+
+      - run: pnpm test
+
+      - name: Create release PR or publish
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          publish: pnpm exec changeset publish
+          createGithubReleases: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read released version
+        if: steps.changesets.outputs.published == 'true'
+        id: version
+        run: |
+          version=$(node -p "require('./packages/aws-core/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog section
+        if: steps.changesets.outputs.published == 'true'
+        id: changelog
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          node -e "
+            const fs = require('fs');
+            const md = fs.readFileSync('packages/aws-core/CHANGELOG.md', 'utf8');
+            const lines = md.split('\n');
+            const start = lines.findIndex(l => l.startsWith('## ' + process.argv[1]));
+            if (start === -1) { console.error('version section not found'); process.exit(1); }
+            const rest = lines.slice(start + 1);
+            const end = rest.findIndex(l => l.startsWith('## '));
+            const body = (end === -1 ? rest : rest.slice(0, end)).join('\n').trim();
+            fs.writeFileSync('RELEASE_BODY.md', body);
+          " "$version"
+
+      - name: Create tag and GitHub Release
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --notes-file RELEASE_BODY.md

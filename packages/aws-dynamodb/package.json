@@ -1,5 +1,5 @@
 {
-  "name": "@bewdym8/dynamodb",
+  "name": "@bm8/aws-dynamodb",
   "version": "0.0.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,6 +22,17 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.693.0",
     "@aws-sdk/lib-dynamodb": "^3.693.0",
-    "@bewdym8/core": "workspace:*"
-  }
+    "@bm8/aws-core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pgcarter/aws-utils.git",
+    "directory": "packages/aws-dynamodb"
+  },
+  "license": "MIT",
+  "author": "Paul Carter"
 }

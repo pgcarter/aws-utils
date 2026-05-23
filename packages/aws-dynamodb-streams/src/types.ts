@@ -3,7 +3,7 @@ import type {
   AnyEntityDefinition,
   EntityKey,
   ResolvedEntity,
-} from '@bewdym8/dynamodb';
+} from '@bm8/aws-dynamodb';
 
 export type DynamoDBRecord = _Record;
 

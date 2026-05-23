@@ -1,10 +1,10 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/core" },
-    { "path": "packages/dynamodb" },
-    { "path": "packages/dynamodb-streams" },
-    { "path": "packages/s3" },
-    { "path": "packages/kinesis" }
+    { "path": "packages/aws-core" },
+    { "path": "packages/aws-dynamodb" },
+    { "path": "packages/aws-dynamodb-streams" },
+    { "path": "packages/aws-s3" },
+    { "path": "packages/aws-kinesis" }
   ]
 }
