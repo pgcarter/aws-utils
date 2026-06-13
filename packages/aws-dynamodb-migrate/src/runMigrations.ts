@@ -6,8 +6,10 @@ import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   computePending,
   discoverMigrations,
+  findOutOfOrder,
   type DiscoveredMigration,
 } from './discovery.js';
+import { OutOfOrderError } from './errors.js';
 import {
   createLedgerClient,
   DEFAULT_ACTOR,
@@ -45,6 +47,17 @@ export interface RunMigrationsOptions<TClient> {
   migrationsDir: string;
   /** Actor recorded in ledger audit fields. Defaults to the tool's own identity. */
   actor?: LedgerActor;
+  /**
+   * Reject (with {@link OutOfOrderError}) a pending migration older than the
+   * newest already-applied one, before applying anything. Defaults to `true`.
+   * Set `false` (equivalently, {@link allowOutOfOrder}) to permit it.
+   */
+  strictOrder?: boolean;
+  /**
+   * Opt out of strict ordering: apply an out-of-order pending migration instead
+   * of throwing. Defaults to `false`. For branchy teams that accept the risk.
+   */
+  allowOutOfOrder?: boolean;
 }
 
 /** Structured summary of a clean run. Never carries a failure — those throw. */
@@ -79,7 +92,15 @@ const importMigration = async <TClient>(filePath: string): Promise<MigrationModu
 export const runMigrations = async <TClient>(
   options: RunMigrationsOptions<TClient>,
 ): Promise<MigrationSummary> => {
-  const { client, tableName, dynamoClient, migrationsDir, actor = DEFAULT_ACTOR } = options;
+  const {
+    client,
+    tableName,
+    dynamoClient,
+    migrationsDir,
+    actor = DEFAULT_ACTOR,
+    strictOrder = true,
+    allowOutOfOrder = false,
+  } = options;
 
   const ledger = createLedgerClient(tableName, dynamoClient, actor);
 
@@ -93,6 +114,15 @@ export const runMigrations = async <TClient>(
   const skipped = discovered
     .filter((m: DiscoveredMigration) => appliedIds.has(m.id))
     .map((m) => m.id);
+
+  // Refuse an out-of-order merge before applying anything, unless the caller
+  // has opted out via allowOutOfOrder (or strictOrder: false).
+  if (strictOrder && !allowOutOfOrder) {
+    const outOfOrder = findOutOfOrder(pending, appliedIds);
+    if (outOfOrder) {
+      throw new OutOfOrderError(outOfOrder.migration, outOfOrder.newestApplied);
+    }
+  }
 
   const applied: string[] = [];
   for (const migration of pending) {

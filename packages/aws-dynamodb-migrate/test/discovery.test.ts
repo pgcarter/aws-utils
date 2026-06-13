@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { computePending, discoverMigrations, parseMigrationFilename } from '../src';
+import {
+  computePending,
+  discoverMigrations,
+  findOutOfOrder,
+  newestApplied,
+  parseMigrationFilename,
+} from '../src';
 
 describe('parseMigrationFilename', () => {
   it('splits id (timestamp prefix) from the full name', () => {
@@ -41,5 +47,42 @@ describe('computePending', () => {
     ]);
     const pending = computePending(discovered, new Set(['20260101T0000']));
     expect(pending.map((m) => m.id)).toEqual(['20260102T0000', '20260103T0000']);
+  });
+});
+
+describe('newestApplied', () => {
+  it('returns the lexicographically greatest id', () => {
+    expect(newestApplied(new Set(['20260101T0000', '20260103T0000', '20260102T0000']))).toBe(
+      '20260103T0000',
+    );
+  });
+
+  it('returns null for an empty ledger', () => {
+    expect(newestApplied(new Set())).toBeNull();
+  });
+});
+
+describe('findOutOfOrder', () => {
+  const disk = discoverMigrations([
+    '20260101T0000__a.ts',
+    '20260102T0000__b.ts',
+    '20260103T0000__c.ts',
+  ]);
+
+  it('flags the oldest pending migration older than the newest applied', () => {
+    // b applied; a (older) is pending — out of order.
+    const pending = computePending(disk, new Set(['20260102T0000']));
+    const result = findOutOfOrder(pending, new Set(['20260102T0000']));
+    expect(result?.migration.id).toBe('20260101T0000');
+    expect(result?.newestApplied).toBe('20260102T0000');
+  });
+
+  it('returns null when every pending migration is newer than the ledger high-water mark', () => {
+    const pending = computePending(disk, new Set(['20260101T0000']));
+    expect(findOutOfOrder(pending, new Set(['20260101T0000']))).toBeNull();
+  });
+
+  it('returns null for an empty ledger', () => {
+    expect(findOutOfOrder(disk, new Set())).toBeNull();
   });
 });

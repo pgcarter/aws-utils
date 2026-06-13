@@ -8,9 +8,12 @@ export {
 export {
   computePending,
   discoverMigrations,
+  findOutOfOrder,
+  newestApplied,
   parseMigrationFilename,
   type DiscoveredMigration,
 } from './discovery.js';
+export { OutOfOrderError } from './errors.js';
 export {
   DEFAULT_ACTOR,
   LEDGER_PK,
