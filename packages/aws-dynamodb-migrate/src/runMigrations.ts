@@ -17,6 +17,7 @@ import {
   type LedgerActor,
 } from './ledger.js';
 import { acquireLock, createLockClient, releaseLock } from './lock.js';
+import { noopLogger, type MigrationLogger } from './logger.js';
 
 /**
  * The context a migration's `up` receives: the user's typed `@bm8/aws-dynamodb`
@@ -59,11 +60,29 @@ export interface RunMigrationsOptions<TClient> {
    * of throwing. Defaults to `false`. For branchy teams that accept the risk.
    */
   allowOutOfOrder?: boolean;
+  /**
+   * Report which migrations *would* run, in order, but mutate nothing: no `up`
+   * is executed, no ledger row is written, and the lock is never taken (so a dry
+   * run cannot interfere with a real run in progress). The same blocking checks
+   * still run, so a dry run faithfully reports whether the run would proceed.
+   * Cannot simulate what each `up` would do to the data — only which migrations
+   * are pending. Defaults to `false`.
+   */
+  dryRun?: boolean;
+  /**
+   * Progress sink. Receives which migrations are being applied, were applied, or
+   * skipped, plus non-fatal warnings. Defaults to a silent no-op; the CLI passes
+   * a console logger and a Lambda passes a structured one.
+   */
+  logger?: MigrationLogger;
 }
 
 /** Structured summary of a clean run. Never carries a failure — those throw. */
 export interface MigrationSummary {
-  /** Ids applied this run, in ascending order. */
+  /**
+   * Ids applied this run, in ascending order. Under `dryRun`, the ids that
+   * *would* be applied (nothing was actually written).
+   */
   applied: string[];
   /** Ids already in the ledger and therefore skipped this run. */
   skipped: string[];
@@ -101,9 +120,28 @@ export const runMigrations = async <TClient>(
     actor = DEFAULT_ACTOR,
     strictOrder = true,
     allowOutOfOrder = false,
+    dryRun = false,
+    logger = noopLogger,
   } = options;
 
   const ledger = createLedgerClient(tableName, dynamoClient, actor);
+
+  const args: ApplyPendingArgs<TClient> = {
+    ledger,
+    client,
+    migrationsDir,
+    strictOrder,
+    allowOutOfOrder,
+    dryRun,
+    logger,
+  };
+
+  // A dry run is read-only: it never takes the lock (so it cannot interfere with
+  // a real run already in progress) and writes nothing. Skip the acquire/finally
+  // dance entirely.
+  if (dryRun) {
+    return applyPending(args);
+  }
 
   // Take the lock before doing anything else, so two concurrent runs cannot
   // double-apply. If another run holds it, acquireLock throws MigrationLockedError
@@ -112,13 +150,7 @@ export const runMigrations = async <TClient>(
   await acquireLock(lock, actor.id, new Date().toISOString());
 
   try {
-    return await applyPending({
-      ledger,
-      client,
-      migrationsDir,
-      strictOrder,
-      allowOutOfOrder,
-    });
+    return await applyPending(args);
   } finally {
     // Released on every exit — clean run, failed migration, or out-of-order reject.
     await releaseLock(lock);
@@ -131,6 +163,8 @@ interface ApplyPendingArgs<TClient> {
   migrationsDir: string;
   strictOrder: boolean;
   allowOutOfOrder: boolean;
+  dryRun: boolean;
+  logger: MigrationLogger;
 }
 
 const applyPending = async <TClient>({
@@ -139,6 +173,8 @@ const applyPending = async <TClient>({
   migrationsDir,
   strictOrder,
   allowOutOfOrder,
+  dryRun,
+  logger,
 }: ApplyPendingArgs<TClient>): Promise<MigrationSummary> => {
   const entries = await readdir(migrationsDir);
   const discovered = discoverMigrations(entries);
@@ -165,9 +201,11 @@ const applyPending = async <TClient>({
   );
 
   const pending = computePending(discovered, appliedIds);
-  const skipped = discovered
-    .filter((m: DiscoveredMigration) => appliedIds.has(m.id))
-    .map((m) => m.id);
+  const skippedMigrations = discovered.filter((m: DiscoveredMigration) => appliedIds.has(m.id));
+  for (const m of skippedMigrations) {
+    logger.info(`skipping already-applied migration ${m.name}`);
+  }
+  const skipped = skippedMigrations.map((m) => m.id);
 
   // Refuse an out-of-order merge before applying anything, unless the caller
   // has opted out via allowOutOfOrder (or strictOrder: false).
@@ -180,9 +218,18 @@ const applyPending = async <TClient>({
 
   const applied: string[] = [];
   for (const migration of pending) {
+    // A dry run reports the ordered would-run set but touches nothing — no file
+    // read, no import, no `up`, no ledger write.
+    if (dryRun) {
+      logger.info(`[dry-run] would apply migration ${migration.name}`);
+      applied.push(migration.id);
+      continue;
+    }
+
     const filePath = join(migrationsDir, migration.name);
     const checksum = checksumOf(await readFile(filePath, 'utf8'));
 
+    logger.info(`applying migration ${migration.name}`);
     const { up } = await importMigration<TClient>(filePath);
     try {
       await up({ db: client });
@@ -207,6 +254,7 @@ const applyPending = async <TClient>({
       checksum,
       status: 'applied',
     });
+    logger.info(`applied migration ${migration.name}`);
     applied.push(migration.id);
   }
 

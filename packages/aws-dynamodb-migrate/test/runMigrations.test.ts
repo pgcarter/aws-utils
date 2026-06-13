@@ -336,6 +336,103 @@ describe('runMigrations', () => {
     });
   });
 
+  describe('dry-run and logger', () => {
+    const BACKFILL_NAME = '20260101T0000__backfill-user-status.ts';
+    const CAPITALIZE_NAME = '20260102T0000__capitalize-status.ts';
+
+    it('reports what would run, in order, without writing the ledger, data, or lock', async () => {
+      await db.user.put(makeUser({ PK: 'USER#dr1', SK: 'USER#dr1', name: 'Dot' }));
+
+      const result = await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+        dryRun: true,
+      });
+
+      // The would-run set, in ascending order.
+      expect(result).toEqual({ applied: [BACKFILL_ID, CAPITALIZE_ID], skipped: [] });
+
+      // No ledger rows written.
+      expect(await readLedgerRow(BACKFILL_ID)).toBeUndefined();
+      expect(await readLedgerRow(CAPITALIZE_ID)).toBeUndefined();
+      // Data untouched: the backfill migration would have set a status.
+      const dot = await db.user.get({ PK: 'USER#dr1', SK: 'USER#dr1' });
+      expect(dot?.status).toBeUndefined();
+      // No lock acquired (and so none left behind).
+      expect(await readLockRow()).toBeUndefined();
+    });
+
+    it('lists already-applied migrations as skipped under dry-run', async () => {
+      await seedApplied(BACKFILL_ID, BACKFILL_NAME);
+
+      const result = await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+        dryRun: true,
+      });
+
+      expect(result).toEqual({ applied: [CAPITALIZE_ID], skipped: [BACKFILL_ID] });
+    });
+
+    it('is read-only: a dry-run ignores a held lock and writes nothing', async () => {
+      await seedLock('other-run');
+
+      const result = await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+        dryRun: true,
+      });
+
+      expect(result.applied).toEqual([BACKFILL_ID, CAPITALIZE_ID]);
+      // The other run's lock is untouched — dry-run neither takes nor clears it.
+      expect(await readLockRow()).toMatchObject({ actor: 'other-run' });
+    });
+
+    it('reports progress for applied and skipped migrations through the injected logger', async () => {
+      await db.user.put(makeUser({ PK: 'USER#lg1', SK: 'USER#lg1', name: 'Gus' }));
+
+      const info: string[] = [];
+      const warn: string[] = [];
+      const logger = { info: (m: string) => info.push(m), warn: (m: string) => warn.push(m) };
+
+      // First run applies both — expect applying/applied signals, no warnings.
+      await runMigrations({ client: db, tableName, dynamoClient: rawClient, migrationsDir, logger });
+      expect(info).toContain(`applying migration ${BACKFILL_NAME}`);
+      expect(info).toContain(`applied migration ${BACKFILL_NAME}`);
+      expect(info).toContain(`applying migration ${CAPITALIZE_NAME}`);
+      expect(warn).toEqual([]);
+
+      // Second run skips both — expect skip signals.
+      info.length = 0;
+      await runMigrations({ client: db, tableName, dynamoClient: rawClient, migrationsDir, logger });
+      expect(info).toContain(`skipping already-applied migration ${BACKFILL_NAME}`);
+      expect(info).toContain(`skipping already-applied migration ${CAPITALIZE_NAME}`);
+    });
+
+    it('emits would-apply signals through the logger on a dry-run', async () => {
+      const info: string[] = [];
+      const logger = { info: (m: string) => info.push(m), warn: () => {} };
+
+      await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+        dryRun: true,
+        logger,
+      });
+
+      expect(info).toContain(`[dry-run] would apply migration ${BACKFILL_NAME}`);
+      expect(info).toContain(`[dry-run] would apply migration ${CAPITALIZE_NAME}`);
+    });
+  });
+
   describe('concurrency lock', () => {
     it('rejects with MigrationLockedError when another run holds the lock', async () => {
       await db.user.put(makeUser({ PK: 'USER#l1', SK: 'USER#l1', name: 'Lou' }));
