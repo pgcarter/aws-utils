@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/aws-core" },
     { "path": "packages/aws-dynamodb" },
+    { "path": "packages/aws-dynamodb-migrate" },
     { "path": "packages/aws-dynamodb-streams" },
     { "path": "packages/aws-s3" },
     { "path": "packages/aws-kinesis" }
