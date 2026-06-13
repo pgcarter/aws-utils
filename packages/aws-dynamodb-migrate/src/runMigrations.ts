@@ -9,7 +9,7 @@ import {
   findOutOfOrder,
   type DiscoveredMigration,
 } from './discovery.js';
-import { MigrationFailedError, OutOfOrderError } from './errors.js';
+import { ChecksumMismatchError, MigrationFailedError, OutOfOrderError } from './errors.js';
 import {
   createLedgerClient,
   DEFAULT_ACTOR,
@@ -38,6 +38,13 @@ export interface MigrationModule<TClient = unknown> {
   up: (ctx: MigrationContext<TClient>) => Promise<void>;
 }
 
+/**
+ * How to react when an already-applied migration's on-disk source no longer
+ * matches the checksum recorded when it ran. `'warn'` (default) logs through the
+ * logger and proceeds; `'fail'` rejects with {@link ChecksumMismatchError}.
+ */
+export type ChecksumMismatchMode = 'warn' | 'fail';
+
 export interface RunMigrationsOptions<TClient> {
   /** The user's `createDynamoClient` instance, forwarded to each `up({ db })`. */
   client: TClient;
@@ -60,6 +67,13 @@ export interface RunMigrationsOptions<TClient> {
    * of throwing. Defaults to `false`. For branchy teams that accept the risk.
    */
   allowOutOfOrder?: boolean;
+  /**
+   * What to do when an already-applied migration's on-disk source has changed
+   * since it ran (its re-hashed checksum differs from the recorded one). `'warn'`
+   * (default) logs the mismatch and proceeds; `'fail'` rejects with
+   * {@link ChecksumMismatchError}. An unchanged migration triggers neither.
+   */
+  onChecksumMismatch?: ChecksumMismatchMode;
   /**
    * Report which migrations *would* run, in order, but mutate nothing: no `up`
    * is executed, no ledger row is written, and the lock is never taken (so a dry
@@ -120,6 +134,7 @@ export const runMigrations = async <TClient>(
     actor = DEFAULT_ACTOR,
     strictOrder = true,
     allowOutOfOrder = false,
+    onChecksumMismatch = 'warn',
     dryRun = false,
     logger = noopLogger,
   } = options;
@@ -132,6 +147,7 @@ export const runMigrations = async <TClient>(
     migrationsDir,
     strictOrder,
     allowOutOfOrder,
+    onChecksumMismatch,
     dryRun,
     logger,
   };
@@ -163,6 +179,7 @@ interface ApplyPendingArgs<TClient> {
   migrationsDir: string;
   strictOrder: boolean;
   allowOutOfOrder: boolean;
+  onChecksumMismatch: ChecksumMismatchMode;
   dryRun: boolean;
   logger: MigrationLogger;
 }
@@ -173,6 +190,7 @@ const applyPending = async <TClient>({
   migrationsDir,
   strictOrder,
   allowOutOfOrder,
+  onChecksumMismatch,
   dryRun,
   logger,
 }: ApplyPendingArgs<TClient>): Promise<MigrationSummary> => {
@@ -196,9 +214,10 @@ const applyPending = async <TClient>({
     );
   }
 
-  const appliedIds = new Set(
-    ledgerRows.filter((row) => row.status === 'applied').map((row) => row.SK),
-  );
+  const appliedRows = ledgerRows.filter((row) => row.status === 'applied');
+  const appliedIds = new Set(appliedRows.map((row) => row.SK));
+  // id → checksum recorded when the migration was applied, for re-verification.
+  const recordedChecksums = new Map(appliedRows.map((row) => [row.SK, row.checksum]));
 
   const pending = computePending(discovered, appliedIds);
   const skippedMigrations = discovered.filter((m: DiscoveredMigration) => appliedIds.has(m.id));
@@ -206,6 +225,23 @@ const applyPending = async <TClient>({
     logger.info(`skipping already-applied migration ${m.name}`);
   }
   const skipped = skippedMigrations.map((m) => m.id);
+
+  // Verify each already-applied migration still on disk matches the checksum
+  // recorded when it ran — an edit after the fact means the file and the data it
+  // produced have silently diverged. Read-only, so it runs under dryRun too.
+  for (const m of skippedMigrations) {
+    const recorded = recordedChecksums.get(m.id);
+    if (recorded === undefined) continue;
+    const onDisk = checksumOf(await readFile(join(migrationsDir, m.name), 'utf8'));
+    if (onDisk === recorded) continue;
+    if (onChecksumMismatch === 'fail') {
+      throw new ChecksumMismatchError(m, recorded, onDisk);
+    }
+    logger.warn(
+      `checksum mismatch for already-applied migration ${m.name}: it was edited ` +
+        `after it ran (recorded ${recorded}, on disk ${onDisk}).`,
+    );
+  }
 
   // Refuse an out-of-order merge before applying anything, unless the caller
   // has opted out via allowOutOfOrder (or strictOrder: false).

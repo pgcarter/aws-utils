@@ -10,6 +10,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ChecksumMismatchError,
   forceUnlock,
   MigrationFailedError,
   MigrationLockedError,
@@ -430,6 +431,78 @@ describe('runMigrations', () => {
 
       expect(info).toContain(`[dry-run] would apply migration ${BACKFILL_NAME}`);
       expect(info).toContain(`[dry-run] would apply migration ${CAPITALIZE_NAME}`);
+    });
+  });
+
+  describe('checksum verification', () => {
+    const BACKFILL_NAME = '20260101T0000__backfill-user-status.ts';
+
+    it('warns and proceeds when an applied migration was edited (default)', async () => {
+      await db.user.put(makeUser({ PK: 'USER#cs1', SK: 'USER#cs1', name: 'Cyn' }));
+      // Applied with a checksum that cannot match the real file → simulates an edit.
+      await seedApplied(BACKFILL_ID, BACKFILL_NAME);
+
+      const warn: string[] = [];
+      const logger = { info: () => {}, warn: (m: string) => warn.push(m) };
+
+      const result = await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+        logger,
+      });
+
+      // Warned about the divergence, but did not halt: the pending migration ran.
+      expect(warn.some((m) => m.includes(BACKFILL_NAME))).toBe(true);
+      expect(result.applied).toEqual([CAPITALIZE_ID]);
+      expect(result.skipped).toEqual([BACKFILL_ID]);
+    });
+
+    it('rejects with ChecksumMismatchError under onChecksumMismatch: "fail"', async () => {
+      await db.user.put(makeUser({ PK: 'USER#cs2', SK: 'USER#cs2', name: 'Cob' }));
+      await seedApplied(BACKFILL_ID, BACKFILL_NAME);
+
+      const pending = runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+        onChecksumMismatch: 'fail',
+      });
+
+      await expect(pending).rejects.toBeInstanceOf(ChecksumMismatchError);
+      await pending.catch((error: ChecksumMismatchError) => {
+        expect(error.migration.id).toBe(BACKFILL_ID);
+        expect(error.expected).toBe('seeded');
+        expect(typeof error.actual).toBe('string');
+      });
+
+      // It blocked before applying the pending migration.
+      expect(await readLedgerRow(CAPITALIZE_ID)).toBeUndefined();
+    });
+
+    it('does not warn or throw for an unchanged applied migration', async () => {
+      await db.user.put(makeUser({ PK: 'USER#cs3', SK: 'USER#cs3', name: 'Cleo' }));
+
+      // First run records real checksums from the on-disk sources.
+      await runMigrations({ client: db, tableName, dynamoClient: rawClient, migrationsDir });
+
+      const warn: string[] = [];
+      const logger = { info: () => {}, warn: (m: string) => warn.push(m) };
+
+      // Re-run under the strict mode: unchanged files match, so nothing fires.
+      const result = await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+        onChecksumMismatch: 'fail',
+        logger,
+      });
+
+      expect(warn).toEqual([]);
+      expect(result).toEqual({ applied: [], skipped: [BACKFILL_ID, CAPITALIZE_ID] });
     });
   });
 

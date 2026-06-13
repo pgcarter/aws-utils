@@ -69,6 +69,40 @@ export class MigrationLockedError extends Error {
 }
 
 /**
+ * Thrown when an already-applied migration's source on disk no longer matches
+ * the checksum recorded when it ran — i.e. someone edited a migration after it
+ * was applied. Because an applied migration is never re-run, the edited file and
+ * the data it produced have silently diverged. The core re-hashes every
+ * already-applied migration's on-disk source on each run and compares it to the
+ * stored checksum.
+ *
+ * Only thrown under `onChecksumMismatch: 'fail'`. The default `'warn'` logs the
+ * mismatch through the logger and proceeds, leaving the strictness choice to the
+ * caller.
+ */
+export class ChecksumMismatchError extends Error {
+  /** The already-applied migration whose on-disk source has changed. */
+  readonly migration: DiscoveredMigration;
+  /** The checksum recorded in the ledger when the migration was applied. */
+  readonly expected: string;
+  /** The checksum of the migration's current on-disk source. */
+  readonly actual: string;
+
+  constructor(migration: DiscoveredMigration, expected: string, actual: string) {
+    super(
+      `Migration ${migration.name} was edited after it was applied: its source ` +
+        `checksum (${actual}) no longer matches the one recorded when it ran ` +
+        `(${expected}). An applied migration must be immutable. Revert the file ` +
+        `to what actually ran, or pass onChecksumMismatch: 'warn' to proceed.`,
+    );
+    this.name = 'ChecksumMismatchError';
+    this.migration = migration;
+    this.expected = expected;
+    this.actual = actual;
+  }
+}
+
+/**
  * Thrown when strict ordering is in force and a pending migration is older than
  * the newest migration already recorded in the ledger — the situation caused by
  * merging an old branch after a newer migration has already run. Applying it

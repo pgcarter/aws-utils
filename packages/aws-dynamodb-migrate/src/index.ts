@@ -1,5 +1,6 @@
 export {
   runMigrations,
+  type ChecksumMismatchMode,
   type MigrationContext,
   type MigrationModule,
   type MigrationSummary,
@@ -13,7 +14,12 @@ export {
   parseMigrationFilename,
   type DiscoveredMigration,
 } from './discovery.js';
-export { MigrationFailedError, MigrationLockedError, OutOfOrderError } from './errors.js';
+export {
+  ChecksumMismatchError,
+  MigrationFailedError,
+  MigrationLockedError,
+  OutOfOrderError,
+} from './errors.js';
 export { noopLogger, type MigrationLogger } from './logger.js';
 export { repair, type RepairMode, type RepairOptions } from './repair.js';
 export {
