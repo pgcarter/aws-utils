@@ -9,7 +9,7 @@ import {
   findOutOfOrder,
   type DiscoveredMigration,
 } from './discovery.js';
-import { OutOfOrderError } from './errors.js';
+import { MigrationFailedError, OutOfOrderError } from './errors.js';
 import {
   createLedgerClient,
   DEFAULT_ACTOR,
@@ -108,7 +108,25 @@ export const runMigrations = async <TClient>(
   const discovered = discoverMigrations(entries);
 
   const ledgerRows = await ledger.ledger.pagedQuery({ pk: LEDGER_PK });
-  const appliedIds = new Set(ledgerRows.map((row) => row.SK));
+
+  // A prior `failed` row halts the whole line until a human repairs it: refuse
+  // to apply anything (even unrelated newer migrations) while one stands. Report
+  // the oldest offender, consistent with how out-of-order picks the oldest.
+  const failedRows = ledgerRows
+    .filter((row) => row.status === 'failed')
+    .sort((a, b) => (a.SK < b.SK ? -1 : a.SK > b.SK ? 1 : 0));
+  if (failedRows.length > 0) {
+    const blocking = failedRows[0]!;
+    throw new MigrationFailedError(
+      { id: blocking.SK, name: blocking.name },
+      blocking.error ?? 'a prior run left this migration in a failed state',
+      [],
+    );
+  }
+
+  const appliedIds = new Set(
+    ledgerRows.filter((row) => row.status === 'applied').map((row) => row.SK),
+  );
 
   const pending = computePending(discovered, appliedIds);
   const skipped = discovered
@@ -130,7 +148,21 @@ export const runMigrations = async <TClient>(
     const checksum = checksumOf(await readFile(filePath, 'utf8'));
 
     const { up } = await importMigration<TClient>(filePath);
-    await up({ db: client });
+    try {
+      await up({ db: client });
+    } catch (cause) {
+      // No transactions: `up` may have left partial writes. Record a `failed`
+      // row (which blocks every later run) and halt — do not run anything after.
+      await ledger.ledger.put({
+        PK: LEDGER_PK,
+        SK: migration.id,
+        name: migration.name,
+        checksum,
+        status: 'failed',
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
+      throw new MigrationFailedError(migration, cause, [...applied]);
+    }
 
     await ledger.ledger.put({
       PK: LEDGER_PK,

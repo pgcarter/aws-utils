@@ -14,6 +14,8 @@ export type UserItem = {
   name: string;
   email: string;
   status?: string;
+  okMark?: string;
+  afterMark?: string;
 };
 
 export const userEntity = defineEntity<'USER', UserItem, ['GSI1']>('USER', {

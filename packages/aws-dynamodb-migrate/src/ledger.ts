@@ -4,7 +4,7 @@ import { createDynamoClient, defineEntity, type DynamoClient } from '@bm8/aws-dy
 /** The partition every ledger row (and the lock) lives in, within the user's table. */
 export const LEDGER_PK = 'DB_MIGRATE' as const;
 
-/** Status of a recorded migration. `failed` halts the line until repaired (later slice). */
+/** Status of a recorded migration. `failed` halts the line until repaired (retry/resolve). */
 export type LedgerStatus = 'applied' | 'failed';
 
 /**
@@ -18,6 +18,7 @@ export type LedgerAttrs = {
   name: string; // the human filename
   checksum: string; // hash of the migration's source bytes at apply time
   status: LedgerStatus;
+  error?: string; // failure message, recorded only on a `failed` row
 };
 
 /** Actor recorded in the ledger's audit fields — who ran the migration. */

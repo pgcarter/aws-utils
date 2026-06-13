@@ -9,7 +9,7 @@ import {
   QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OutOfOrderError, runMigrations } from '../src';
+import { MigrationFailedError, OutOfOrderError, repair, runMigrations } from '../src';
 import { type AppClient, makeUser, makeUserClient } from './fixtures';
 
 const endpoint = process.env.DYNAMODB_TEST_ENDPOINT!;
@@ -22,8 +22,21 @@ const migrationsDir = resolve(
   'fixtures/migrations',
 );
 
+// A separate fixture dir whose middle migration throws on purpose, used to
+// exercise failure-halts-the-line and repair (retry/resolve).
+const failingDir = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  'fixtures/failing-migrations',
+);
+
 const BACKFILL_ID = '20260101T0000';
 const CAPITALIZE_ID = '20260102T0000';
+
+const OK_ID = '20260301T0000';
+const OK_NAME = '20260301T0000__ok.ts';
+const BOOM_ID = '20260302T0000';
+const BOOM_NAME = '20260302T0000__boom.ts';
+const AFTER_ID = '20260303T0000';
 
 let rawClient: DynamoDBClient;
 let doc: DynamoDBDocumentClient;
@@ -64,6 +77,24 @@ const seedApplied = async (id: string, name: string) => {
         name,
         checksum: 'seeded',
         status: 'applied',
+      },
+    }),
+  );
+};
+
+/** Seed a `failed` ledger row directly, as if a prior run had failed mid-line. */
+const seedFailed = async (id: string, name: string, error: string) => {
+  await doc.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        PK: 'DB_MIGRATE',
+        SK: id,
+        type: 'DB_MIGRATE',
+        name,
+        checksum: 'seeded',
+        status: 'failed',
+        error,
       },
     }),
   );
@@ -187,6 +218,90 @@ describe('runMigrations', () => {
       expect(result.applied).toEqual([BACKFILL_ID]);
       expect(result.skipped).toContain(CAPITALIZE_ID);
       expect(await readLedgerRow(BACKFILL_ID)).toMatchObject({ status: 'applied' });
+    });
+  });
+
+  describe('failure and repair', () => {
+    const run = () =>
+      runMigrations({ client: db, tableName, dynamoClient: rawClient, migrationsDir: failingDir });
+
+    it('writes a failed row, halts the line, and rejects with MigrationFailedError', async () => {
+      await db.user.put(makeUser({ PK: 'USER#f1', SK: 'USER#f1', name: 'Fay' }));
+
+      const pending = run();
+      await expect(pending).rejects.toBeInstanceOf(MigrationFailedError);
+      await pending.catch((error: MigrationFailedError) => {
+        expect(error.migration.id).toBe(BOOM_ID);
+        expect(error.appliedBefore).toEqual([OK_ID]); // ok ran before boom threw
+        expect(error.cause).toBeInstanceOf(Error);
+        expect((error.cause as Error).message).toContain('boom');
+      });
+
+      // ok applied, boom recorded failed (with the cause), after never recorded.
+      expect(await readLedgerRow(OK_ID)).toMatchObject({ status: 'applied' });
+      expect(await readLedgerRow(BOOM_ID)).toMatchObject({
+        status: 'failed',
+        error: expect.stringContaining('boom'),
+      });
+      expect(await readLedgerRow(AFTER_ID)).toBeUndefined();
+
+      // The migration after boom did not touch data.
+      const fay = await db.user.get({ PK: 'USER#f1', SK: 'USER#f1' });
+      expect(fay?.okMark).toBe('ok');
+      expect(fay?.afterMark).toBeUndefined();
+    });
+
+    it('blocks a subsequent run while a failed row stands, applying nothing', async () => {
+      await seedFailed(BOOM_ID, BOOM_NAME, 'an earlier run failed here');
+
+      const pending = run();
+      await expect(pending).rejects.toBeInstanceOf(MigrationFailedError);
+      await pending.catch((error: MigrationFailedError) => {
+        expect(error.migration.id).toBe(BOOM_ID);
+        expect(error.appliedBefore).toEqual([]); // blocked before applying anything
+      });
+
+      // The block ran before the apply loop: ok was never applied.
+      expect(await readLedgerRow(OK_ID)).toBeUndefined();
+    });
+
+    it('repair-retry deletes the failed row so the migration is re-attempted', async () => {
+      await db.user.put(makeUser({ PK: 'USER#r1', SK: 'USER#r1', name: 'Rey' }));
+      await run().catch(() => {});
+      expect(await readLedgerRow(BOOM_ID)).toMatchObject({ status: 'failed' });
+
+      await repair({ tableName, dynamoClient: rawClient, id: BOOM_ID, mode: 'retry' });
+      expect(await readLedgerRow(BOOM_ID)).toBeUndefined(); // reverted to pending
+
+      // The next run re-runs boom from the top — it still throws, failing afresh.
+      await expect(run()).rejects.toBeInstanceOf(MigrationFailedError);
+      expect(await readLedgerRow(BOOM_ID)).toMatchObject({ status: 'failed' });
+    });
+
+    it('repair-resolve marks it applied so the line continues past it', async () => {
+      await db.user.put(makeUser({ PK: 'USER#r2', SK: 'USER#r2', name: 'Rez' }));
+      await run().catch(() => {});
+
+      await repair({ tableName, dynamoClient: rawClient, id: BOOM_ID, mode: 'resolve' });
+      expect(await readLedgerRow(BOOM_ID)).toMatchObject({ status: 'applied' });
+
+      // boom is now skipped; the migration after it finally runs.
+      const result = await run();
+      expect(result.applied).toEqual([AFTER_ID]);
+      expect(result.skipped).toEqual([OK_ID, BOOM_ID]);
+      expect(await readLedgerRow(AFTER_ID)).toMatchObject({ status: 'applied' });
+
+      const rez = await db.user.get({ PK: 'USER#r2', SK: 'USER#r2' });
+      expect(rez?.afterMark).toBe('after');
+    });
+
+    it('repair refuses a row that is not failed', async () => {
+      await seedApplied(OK_ID, OK_NAME);
+      await expect(
+        repair({ tableName, dynamoClient: rawClient, id: OK_ID, mode: 'retry' }),
+      ).rejects.toThrow(/not "failed"/);
+      // The applied row is untouched.
+      expect(await readLedgerRow(OK_ID)).toMatchObject({ status: 'applied' });
     });
   });
 });

@@ -13,7 +13,8 @@ export {
   parseMigrationFilename,
   type DiscoveredMigration,
 } from './discovery.js';
-export { OutOfOrderError } from './errors.js';
+export { MigrationFailedError, OutOfOrderError } from './errors.js';
+export { repair, type RepairMode, type RepairOptions } from './repair.js';
 export {
   DEFAULT_ACTOR,
   LEDGER_PK,
