@@ -16,6 +16,7 @@ import {
   LEDGER_PK,
   type LedgerActor,
 } from './ledger.js';
+import { acquireLock, createLockClient, releaseLock } from './lock.js';
 
 /**
  * The context a migration's `up` receives: the user's typed `@bm8/aws-dynamodb`
@@ -104,6 +105,41 @@ export const runMigrations = async <TClient>(
 
   const ledger = createLedgerClient(tableName, dynamoClient, actor);
 
+  // Take the lock before doing anything else, so two concurrent runs cannot
+  // double-apply. If another run holds it, acquireLock throws MigrationLockedError
+  // here — before the try below — so we never release a lock we did not take.
+  const lock = createLockClient(tableName, dynamoClient, actor);
+  await acquireLock(lock, actor.id, new Date().toISOString());
+
+  try {
+    return await applyPending({
+      ledger,
+      client,
+      migrationsDir,
+      strictOrder,
+      allowOutOfOrder,
+    });
+  } finally {
+    // Released on every exit — clean run, failed migration, or out-of-order reject.
+    await releaseLock(lock);
+  }
+};
+
+interface ApplyPendingArgs<TClient> {
+  ledger: ReturnType<typeof createLedgerClient>;
+  client: TClient;
+  migrationsDir: string;
+  strictOrder: boolean;
+  allowOutOfOrder: boolean;
+}
+
+const applyPending = async <TClient>({
+  ledger,
+  client,
+  migrationsDir,
+  strictOrder,
+  allowOutOfOrder,
+}: ApplyPendingArgs<TClient>): Promise<MigrationSummary> => {
   const entries = await readdir(migrationsDir);
   const discovered = discoverMigrations(entries);
 

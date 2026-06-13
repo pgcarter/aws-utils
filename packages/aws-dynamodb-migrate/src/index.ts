@@ -13,8 +13,14 @@ export {
   parseMigrationFilename,
   type DiscoveredMigration,
 } from './discovery.js';
-export { MigrationFailedError, OutOfOrderError } from './errors.js';
+export { MigrationFailedError, MigrationLockedError, OutOfOrderError } from './errors.js';
 export { repair, type RepairMode, type RepairOptions } from './repair.js';
+export {
+  forceUnlock,
+  LOCK_SK,
+  type ForceUnlockOptions,
+  type LockAttrs,
+} from './lock.js';
 export {
   DEFAULT_ACTOR,
   LEDGER_PK,

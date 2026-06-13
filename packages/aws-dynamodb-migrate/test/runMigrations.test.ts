@@ -9,7 +9,14 @@ import {
   QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MigrationFailedError, OutOfOrderError, repair, runMigrations } from '../src';
+import {
+  forceUnlock,
+  MigrationFailedError,
+  MigrationLockedError,
+  OutOfOrderError,
+  repair,
+  runMigrations,
+} from '../src';
 import { type AppClient, makeUser, makeUserClient } from './fixtures';
 
 const endpoint = process.env.DYNAMODB_TEST_ENDPOINT!;
@@ -47,6 +54,30 @@ const readLedgerRow = async (id: string) => {
     new GetCommand({ TableName: tableName, Key: { PK: 'DB_MIGRATE', SK: id } }),
   );
   return Item;
+};
+
+/** Read the single lock row (PK=DB_MIGRATE, SK=LOCK), if present. */
+const readLockRow = async () => {
+  const { Item } = await doc.send(
+    new GetCommand({ TableName: tableName, Key: { PK: 'DB_MIGRATE', SK: 'LOCK' } }),
+  );
+  return Item;
+};
+
+/** Seed a held lock directly, as if another run were in progress. */
+const seedLock = async (actor: string) => {
+  await doc.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        PK: 'DB_MIGRATE',
+        SK: 'LOCK',
+        type: 'DB_MIGRATE_LOCK',
+        actor,
+        acquiredAt: NOW,
+      },
+    }),
+  );
 };
 
 /** Drop every row in the DB_MIGRATE partition so each test starts from a clean ledger. */
@@ -302,6 +333,82 @@ describe('runMigrations', () => {
       ).rejects.toThrow(/not "failed"/);
       // The applied row is untouched.
       expect(await readLedgerRow(OK_ID)).toMatchObject({ status: 'applied' });
+    });
+  });
+
+  describe('concurrency lock', () => {
+    it('rejects with MigrationLockedError when another run holds the lock', async () => {
+      await db.user.put(makeUser({ PK: 'USER#l1', SK: 'USER#l1', name: 'Lou' }));
+      await seedLock('other-run');
+
+      const pending = runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+      });
+      await expect(pending).rejects.toBeInstanceOf(MigrationLockedError);
+      await pending.catch((error: MigrationLockedError) => {
+        expect(error.heldBy).toBe('other-run');
+        expect(error.acquiredAt).toBe(NOW);
+      });
+
+      // The held lock was not overwritten, and nothing was applied.
+      expect(await readLockRow()).toMatchObject({ actor: 'other-run' });
+      expect(await readLedgerRow(BACKFILL_ID)).toBeUndefined();
+    });
+
+    it('releases the lock after a clean run, so a second run proceeds', async () => {
+      await db.user.put(makeUser({ PK: 'USER#l2', SK: 'USER#l2', name: 'Liz' }));
+
+      const first = await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+      });
+      expect(first.applied).toEqual([BACKFILL_ID, CAPITALIZE_ID]);
+      expect(await readLockRow()).toBeUndefined(); // released in finally
+
+      // Lock is free, so a second run is not blocked (everything just skips).
+      const second = await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+      });
+      expect(second).toEqual({ applied: [], skipped: [BACKFILL_ID, CAPITALIZE_ID] });
+    });
+
+    it('releases the lock after a failed migration', async () => {
+      await db.user.put(makeUser({ PK: 'USER#l3', SK: 'USER#l3', name: 'Len' }));
+
+      await expect(
+        runMigrations({ client: db, tableName, dynamoClient: rawClient, migrationsDir: failingDir }),
+      ).rejects.toBeInstanceOf(MigrationFailedError);
+
+      // Even though the run threw, the lock was cleared in finally.
+      expect(await readLockRow()).toBeUndefined();
+    });
+
+    it('force-unlock clears a stale lock so a subsequent run proceeds', async () => {
+      await db.user.put(makeUser({ PK: 'USER#l4', SK: 'USER#l4', name: 'Mae' }));
+      await seedLock('crashed-run');
+
+      const cleared = await forceUnlock({ tableName, dynamoClient: rawClient });
+      expect(cleared).toBe(true);
+      expect(await readLockRow()).toBeUndefined();
+
+      // A second force-unlock reports nothing left to clear.
+      expect(await forceUnlock({ tableName, dynamoClient: rawClient })).toBe(false);
+
+      const result = await runMigrations({
+        client: db,
+        tableName,
+        dynamoClient: rawClient,
+        migrationsDir,
+      });
+      expect(result.applied).toEqual([BACKFILL_ID, CAPITALIZE_ID]);
     });
   });
 });
