@@ -11,6 +11,9 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "dynamodb-migrate": "./dist/cli/bin.js"
+  },
   "files": [
     "dist"
   ],

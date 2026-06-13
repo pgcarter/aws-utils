@@ -23,6 +23,14 @@ export {
 export { noopLogger, type MigrationLogger } from './logger.js';
 export { repair, type RepairMode, type RepairOptions } from './repair.js';
 export {
+  status,
+  type LockStatus,
+  type MigrationState,
+  type MigrationStatusRow,
+  type StatusOptions,
+  type StatusReport,
+} from './status.js';
+export {
   forceUnlock,
   LOCK_SK,
   type ForceUnlockOptions,

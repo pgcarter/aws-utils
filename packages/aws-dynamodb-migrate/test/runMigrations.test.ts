@@ -17,6 +17,7 @@ import {
   OutOfOrderError,
   repair,
   runMigrations,
+  status,
 } from '../src';
 import { type AppClient, makeUser, makeUserClient } from './fixtures';
 
@@ -579,6 +580,45 @@ describe('runMigrations', () => {
         migrationsDir,
       });
       expect(result.applied).toEqual([BACKFILL_ID, CAPITALIZE_ID]);
+    });
+  });
+
+  describe('status', () => {
+    const BACKFILL_NAME = '20260101T0000__backfill-user-status.ts';
+    const CAPITALIZE_NAME = '20260102T0000__capitalize-status.ts';
+
+    const stateOf = (report: Awaited<ReturnType<typeof status>>, id: string) =>
+      report.migrations.find((m) => m.id === id)?.state;
+
+    it('reports every migration as pending on a fresh ledger, lock free', async () => {
+      const report = await status({ tableName, dynamoClient: rawClient, migrationsDir });
+
+      expect(report.migrations.map((m) => m.id)).toEqual([BACKFILL_ID, CAPITALIZE_ID]);
+      expect(report.migrations.every((m) => m.state === 'pending')).toBe(true);
+      expect(report.lock).toEqual({ held: false });
+    });
+
+    it('classifies applied, pending, and failed from the ledger', async () => {
+      await seedApplied(BACKFILL_ID, BACKFILL_NAME);
+      await seedFailed(CAPITALIZE_ID, CAPITALIZE_NAME, 'kaboom');
+
+      const report = await status({ tableName, dynamoClient: rawClient, migrationsDir });
+
+      expect(stateOf(report, BACKFILL_ID)).toBe('applied');
+      expect(stateOf(report, CAPITALIZE_ID)).toBe('failed');
+      const failed = report.migrations.find((m) => m.id === CAPITALIZE_ID);
+      expect(failed?.error).toBe('kaboom');
+    });
+
+    it('reports a held lock with its actor, and mutates nothing', async () => {
+      await seedLock('deploy-7');
+
+      const report = await status({ tableName, dynamoClient: rawClient, migrationsDir });
+
+      expect(report.lock).toMatchObject({ held: true, actor: 'deploy-7', acquiredAt: NOW });
+      // Read-only: the seeded lock and an empty ledger are untouched.
+      expect(await readLockRow()).toMatchObject({ actor: 'deploy-7' });
+      expect(await readLedgerRow(BACKFILL_ID)).toBeUndefined();
     });
   });
 });
