@@ -1,0 +1,45 @@
+{
+  "name": "@bm8/aws-dynamodb-migrate",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "dynamodb-migrate": "./dist/cli/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && pnpm typecheck:tests",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.test.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.693.0",
+    "@bm8/aws-dynamodb": "workspace:*"
+  },
+  "devDependencies": {
+    "@aws-sdk/lib-dynamodb": "^3.693.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pgcarter/aws-utils.git",
+    "directory": "packages/aws-dynamodb-migrate"
+  },
+  "license": "MIT",
+  "author": "Paul Carter"
+}

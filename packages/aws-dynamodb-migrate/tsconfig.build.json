@@ -1,0 +1,9 @@
+{
+  // tsup's .d.ts build runs an isolated program that only roots the entry
+  // file; `composite` then rejects the internal `./*.js` imports with TS6307.
+  // The base config keeps `composite: true` for `tsc -b` project references.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false
+  }
+}

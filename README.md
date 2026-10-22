@@ -12,6 +12,7 @@ Built while following the [Claude Code for Real Engineers](https://res.cloudinar
 | --- | --- |
 | [`@bm8/aws-dynamodb`](./packages/aws-dynamodb/README.md) | Single-table DynamoDB client with typed entities, GSI support, and paginated queries. |
 | [`@bm8/aws-dynamodb-streams`](./packages/aws-dynamodb-streams/README.md) | Typed DynamoDB Streams record processor for entities defined with `@bm8/aws-dynamodb`. |
+| [`@bm8/aws-dynamodb-migrate`](./packages/aws-dynamodb-migrate/README.md) | Flyway-style, ordered, run-once data migrations for tables built with `@bm8/aws-dynamodb`. |
 | `@bm8/aws-core` | Shared utilities used across the other packages. |
 
 ## Requirements
